@@ -49,7 +49,15 @@ document.addEventListener("DOMContentLoaded", () => {
         : "Not for sale";
 
     const canSell = item.collectibleInstanceId && item.collectibleProductId;
-    const currentResale = item.resalePrice;
+    const hasMultiple = item.allInstances && item.allInstances.length > 1;
+
+    // Track active instance (mutable — changes when dropdown selection changes)
+    const activeInstance = {
+      collectibleInstanceId: item.collectibleInstanceId,
+      collectibleProductId: item.collectibleProductId,
+      saleState: item.saleState,
+      resalePrice: item.resalePrice,
+    };
 
     // Owned count
     let ownedHtml = "";
@@ -68,20 +76,39 @@ document.addEventListener("DOMContentLoaded", () => {
       bestSellerHtml = `<div class="item-best-seller is-you">Best Price (You!)</div>`;
     }
 
-    let saleStateHtml = "";
-    if (item.saleState === "OnSale") {
-      saleStateHtml = `<div class="item-sale-state on-sale">Listed: R$ ${formatPrice(item.resalePrice)}</div>`;
-    } else if (canSell) {
-      saleStateHtml = `<div class="item-sale-state">Not listed</div>`;
-    } else {
-      saleStateHtml = `<div class="item-sale-state">Not resellable</div>`;
+    // Sale state for the active instance
+    function getSaleStateHtml(inst) {
+      if (inst.saleState === "OnSale") {
+        return `<div class="item-sale-state on-sale">Listed: R$ ${formatPrice(inst.resalePrice)}</div>`;
+      } else if (inst.collectibleInstanceId && inst.collectibleProductId) {
+        return `<div class="item-sale-state">Not listed</div>`;
+      }
+      return `<div class="item-sale-state">Not resellable</div>`;
+    }
+
+    let saleStateHtml = getSaleStateHtml(activeInstance);
+
+    // Serial number dropdown
+    let serialDropdownHtml = "";
+    if (hasMultiple) {
+      const options = item.allInstances.map((inst, idx) => {
+        const serial = inst.serialNumber ? `#${inst.serialNumber}` : `Copy ${idx + 1}`;
+        const status = inst.saleState === "OnSale" ? ` - R$ ${formatPrice(inst.price)}` : "";
+        return `<option value="${idx}" ${idx === 0 ? "selected" : ""}>${serial}${status}</option>`;
+      }).join("");
+      serialDropdownHtml = `
+        <div class="serial-select-row">
+          <label class="serial-label">Serial:</label>
+          <select class="serial-select">${options}</select>
+        </div>
+      `;
     }
 
     let priceEditHtml = "";
     if (canSell) {
       priceEditHtml = `
         <div class="item-price-row">
-          <input type="number" class="price-input" min="1" placeholder="${currentResale || "Price"}" value="${currentResale || ""}">
+          <input type="number" class="price-input" min="1" placeholder="${activeInstance.resalePrice || "Price"}" value="${activeInstance.resalePrice || ""}">
           <button class="price-save-btn">Set Price</button>
         </div>
         <div class="price-status hidden"></div>
@@ -99,6 +126,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ${item.creatorName ? `<div class="item-creator">by ${item.creatorName}</div>` : ""}
         <div class="item-price">${lowestText}</div>
         ${ownedHtml}
+        ${serialDropdownHtml}
         ${saleStateHtml}
         ${bestSellerHtml}
         ${priceEditHtml}
@@ -110,18 +138,59 @@ document.addEventListener("DOMContentLoaded", () => {
       removeItem(item.assetId, card);
     });
 
+    // Serial number dropdown change handler
+    if (hasMultiple) {
+      const serialSelect = card.querySelector(".serial-select");
+      serialSelect.addEventListener("change", () => {
+        const idx = Number(serialSelect.value);
+        const inst = item.allInstances[idx];
+
+        // Update active instance
+        activeInstance.collectibleInstanceId = inst.collectibleInstanceId;
+        activeInstance.collectibleProductId = inst.collectibleProductId;
+        activeInstance.saleState = inst.saleState;
+        activeInstance.resalePrice = inst.price;
+
+        // Update sale state display
+        const saleStateEl = card.querySelector(".item-sale-state");
+        if (saleStateEl) {
+          if (inst.saleState === "OnSale") {
+            saleStateEl.textContent = `Listed: R$ ${formatPrice(inst.price)}`;
+            saleStateEl.className = "item-sale-state on-sale";
+          } else {
+            saleStateEl.textContent = "Not listed";
+            saleStateEl.className = "item-sale-state";
+          }
+        }
+
+        // Update price input
+        const priceInput = card.querySelector(".price-input");
+        if (priceInput) {
+          priceInput.value = inst.price || "";
+          priceInput.placeholder = inst.price || "Price";
+        }
+
+        // Clear any status message
+        const statusEl = card.querySelector(".price-status");
+        if (statusEl) {
+          statusEl.textContent = "";
+          statusEl.classList.add("hidden");
+        }
+      });
+    }
+
     if (canSell) {
       const saveBtn = card.querySelector(".price-save-btn");
       const priceInput = card.querySelector(".price-input");
       const statusEl = card.querySelector(".price-status");
 
       saveBtn.addEventListener("click", () => {
-        updatePrice(item, priceInput, saveBtn, statusEl, card);
+        updatePrice(item, priceInput, saveBtn, statusEl, card, activeInstance);
       });
 
       priceInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
-          updatePrice(item, priceInput, saveBtn, statusEl, card);
+          updatePrice(item, priceInput, saveBtn, statusEl, card, activeInstance);
         }
       });
     }
@@ -129,7 +198,8 @@ document.addEventListener("DOMContentLoaded", () => {
     return card;
   }
 
-  async function updatePrice(item, inputEl, btnEl, statusEl, cardEl) {
+  async function updatePrice(item, inputEl, btnEl, statusEl, cardEl, activeInstance) {
+    const inst = activeInstance || item;
     const price = Number(inputEl.value);
     if (!price || price < 1) {
       statusEl.textContent = "Enter a valid price";
@@ -147,8 +217,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_PRICE",
         collectibleItemId: item.collectibleItemId,
-        collectibleInstanceId: item.collectibleInstanceId,
-        collectibleProductId: item.collectibleProductId,
+        collectibleInstanceId: inst.collectibleInstanceId,
+        collectibleProductId: inst.collectibleProductId,
         price,
         userId: currentUserId,
       });
