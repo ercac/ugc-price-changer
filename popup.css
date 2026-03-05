@@ -7,7 +7,7 @@
 body {
   width: 380px;
   min-height: 200px;
-  max-height: 520px;
+  max-height: 580px;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   background-color: #232527;
   color: #e0e0e0;
@@ -260,6 +260,315 @@ body {
   background-color: #3a2020;
 }
 
+/* Serial number dropdown */
+.serial-select-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.serial-label {
+  font-size: 11px;
+  color: #888;
+}
+
+.serial-select {
+  padding: 2px 6px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  max-width: 160px;
+}
+
+.serial-select:focus {
+  border-color: #00b06f;
+}
+
+/* Auto-List Panel */
+.autolist-panel {
+  border-bottom: 1px solid #393b3d;
+  background-color: #1e2022;
+}
+
+.autolist-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s;
+}
+
+.autolist-header:hover {
+  background-color: #2a2c2e;
+}
+
+.autolist-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ccc;
+  flex: 1;
+}
+
+.autolist-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background-color: #00b06f;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-right: 8px;
+  letter-spacing: 0.5px;
+}
+
+.autolist-arrow {
+  font-size: 10px;
+  color: #666;
+}
+
+.autolist-body {
+  padding: 8px 16px 12px;
+  border-top: 1px solid #2e3032;
+}
+
+.autolist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.autolist-row label {
+  font-size: 11px;
+  color: #aaa;
+}
+
+.autolist-input {
+  width: 65px;
+  padding: 3px 6px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  text-align: center;
+}
+
+.autolist-input:focus {
+  border-color: #00b06f;
+}
+
+.autolist-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.autolist-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.autolist-start-btn {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: 4px;
+  background-color: #00b06f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.autolist-start-btn:hover {
+  background-color: #00994f;
+}
+
+.autolist-stop-btn {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: 4px;
+  background-color: #e74c3c;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.autolist-stop-btn:hover {
+  background-color: #c0392b;
+}
+
+.autolist-status {
+  font-size: 10px;
+  color: #888;
+  margin-top: 6px;
+}
+
+.autolist-log {
+  margin-top: 6px;
+  max-height: 100px;
+  overflow-y: auto;
+  border: 1px solid #2e3032;
+  border-radius: 4px;
+  padding: 4px 6px;
+  background-color: #1a1c1e;
+}
+
+.autolist-log-title {
+  font-size: 10px;
+  color: #666;
+  margin-bottom: 2px;
+}
+
+.autolist-log-entry {
+  font-size: 10px;
+  color: #999;
+  padding: 1px 0;
+  border-bottom: 1px solid #232527;
+}
+
+.autolist-log-entry:last-child {
+  border-bottom: none;
+}
+
+.autolist-log-entry.log-success {
+  color: #00b06f;
+}
+
+.autolist-log-entry strong {
+  color: #ccc;
+  font-weight: 600;
+}
+
+/* List count row */
+.listcount-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.listcount-label {
+  font-size: 10px;
+  color: #888;
+}
+
+.listcount-input {
+  width: 40px;
+  padding: 2px 4px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 11px;
+  outline: none;
+  text-align: center;
+}
+
+.listcount-input:focus {
+  border-color: #00b06f;
+}
+
+.listcount-max {
+  font-size: 10px;
+  color: #555;
+}
+
+.listcount-save-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #888;
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.listcount-save-btn:hover {
+  border-color: #00b06f;
+  color: #00b06f;
+}
+
+.listcount-save-btn.saved {
+  border-color: #00b06f;
+  color: #00b06f;
+  background-color: rgba(0, 176, 111, 0.1);
+}
+
+/* Floor price row */
+.floor-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.floor-label {
+  font-size: 10px;
+  color: #888;
+}
+
+.floor-input {
+  width: 60px;
+  padding: 2px 4px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 11px;
+  outline: none;
+}
+
+.floor-input:focus {
+  border-color: #00b06f;
+}
+
+.floor-input::placeholder {
+  color: #555;
+}
+
+.floor-save-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #888;
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.floor-save-btn:hover {
+  border-color: #00b06f;
+  color: #00b06f;
+}
+
+.floor-save-btn.saved {
+  border-color: #00b06f;
+  color: #00b06f;
+  background-color: rgba(0, 176, 111, 0.1);
+}
+
 /* Price editing row */
 .item-price-row {
   display: flex;
@@ -360,58 +669,165 @@ body {
   text-decoration: underline;
 }
 
-/* 2FA prompt */
-.twofa-prompt {
-  margin-top: 4px;
-}
-
-.twofa-label {
-  font-size: 11px;
-  color: #aaa;
-  margin-bottom: 4px;
-}
-
-.twofa-row {
+/* Global 2FA Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  z-index: 100;
 }
 
-.twofa-input {
-  width: 70px;
-  padding: 4px 6px;
+.modal-box {
+  background-color: #1e2022;
   border: 1px solid #393b3d;
-  border-radius: 4px;
+  border-radius: 10px;
+  padding: 20px;
+  width: 300px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.modal-item-name {
+  font-size: 13px;
+  color: #4da6ff;
+  text-align: center;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.modal-desc {
+  font-size: 12px;
+  color: #aaa;
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.modal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.modal-2fa-input {
+  width: 100px;
+  padding: 8px 10px;
+  border: 1px solid #393b3d;
+  border-radius: 6px;
   background-color: #2a2c2e;
   color: #e0e0e0;
-  font-size: 13px;
+  font-size: 16px;
   font-family: monospace;
-  letter-spacing: 2px;
+  letter-spacing: 4px;
   text-align: center;
   outline: none;
 }
 
-.twofa-input:focus {
+.modal-2fa-input:focus {
   border-color: #00b06f;
 }
 
-.twofa-submit-btn {
-  padding: 4px 10px;
+.modal-2fa-submit {
+  padding: 8px 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background-color: #00b06f;
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s;
 }
 
-.twofa-submit-btn:hover {
+.modal-2fa-submit:hover {
   background-color: #00994f;
 }
 
-.twofa-submit-btn:disabled {
+.modal-2fa-submit:disabled {
   background-color: #393b3d;
   color: #666;
   cursor: not-allowed;
+}
+
+.modal-2fa-error {
+  font-size: 11px;
+  color: #e74c3c;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.modal-skip-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #888;
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.modal-skip-btn:hover {
+  border-color: #e74c3c;
+  color: #e74c3c;
+}
+
+.modal-count {
+  font-size: 10px;
+  color: #666;
+}
+
+/* Success Toast */
+.success-toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #00b06f;
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0, 176, 111, 0.3);
+  animation: toastIn 0.3s ease-out;
+}
+
+.toast-icon {
+  font-size: 14px;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }

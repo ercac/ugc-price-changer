@@ -293,6 +293,242 @@ async function verify2FAAndRetry(challengeId, challengeMetadata, twoFACode, user
   return { success: true };
 }
 
+// --- Pending 2FA Queue ---
+
+async function getPending2FA() {
+  const data = await chrome.storage.local.get("pending2FA");
+  return data.pending2FA || [];
+}
+
+async function addPending2FA(entry) {
+  const queue = await getPending2FA();
+  queue.push(entry);
+  await chrome.storage.local.set({ pending2FA: queue });
+  chrome.action.setBadgeText({ text: String(queue.length) });
+  chrome.action.setBadgeBackgroundColor({ color: "#e74c3c" });
+}
+
+async function removePending2FA(index) {
+  const queue = await getPending2FA();
+  queue.splice(index, 1);
+  await chrome.storage.local.set({ pending2FA: queue });
+  if (queue.length === 0) {
+    chrome.action.setBadgeText({ text: "" });
+  } else {
+    chrome.action.setBadgeText({ text: String(queue.length) });
+  }
+}
+
+async function clearAllPending2FA() {
+  await chrome.storage.local.set({ pending2FA: [] });
+  chrome.action.setBadgeText({ text: "" });
+}
+
+// --- Auto-List Engine ---
+
+let autoListRunning = false;
+let autoListTimerId = null;
+
+async function getAutoListSettings() {
+  const data = await chrome.storage.local.get("autoListSettings");
+  const defaults = {
+    enabled: false,
+    intervalMin: 5,       // minutes between cycles
+    undercutAmount: 1,    // R$ to undercut by
+    priceFloors: {},      // { assetId: minPrice }
+    listCounts: {},       // { assetId: count } — how many copies to list
+  };
+  if (!data.autoListSettings) return defaults;
+  // Merge stored settings with defaults so new fields are always present
+  return { ...defaults, ...data.autoListSettings };
+}
+
+async function saveAutoListSettings(settings) {
+  await chrome.storage.local.set({ autoListSettings: settings });
+}
+
+function randomJitter(baseMs) {
+  // Add ±20% jitter so timing doesn't look robotic
+  const jitter = baseMs * 0.2 * (Math.random() * 2 - 1);
+  return Math.round(baseMs + jitter);
+}
+
+async function runAutoListCycle() {
+  const settings = await getAutoListSettings();
+  if (!settings.enabled) {
+    autoListRunning = false;
+    return;
+  }
+
+  console.log("[AutoList] Starting cycle...");
+  const log = [];
+
+  try {
+    const user = await getAuthenticatedUser();
+    const userId = user.id;
+    const watchlist = await getWatchlist();
+
+    if (watchlist.length === 0) {
+      log.push({ msg: "No items in watchlist", time: Date.now() });
+      scheduleNextCycle(settings);
+      return { log };
+    }
+
+    const catalogDetails = await getCatalogDetails(watchlist);
+
+    for (const detail of catalogDetails) {
+      if (!detail.collectibleItemId) continue;
+
+      const floor = settings.priceFloors[detail.id] || 0;
+      const listCount = settings.listCounts[detail.id] || 1;
+
+      try {
+        // Get the current best price on the market
+        const bestSeller = await getLowestReseller(detail.collectibleItemId);
+        if (!bestSeller || !bestSeller.price) {
+          log.push({ item: detail.name, msg: "No resellers found, skipping", time: Date.now() });
+          continue;
+        }
+
+        // Calculate undercut price
+        let targetPrice = bestSeller.price - settings.undercutAmount;
+        if (targetPrice < 1) targetPrice = 1;
+
+        // Enforce price floor
+        if (floor > 0 && targetPrice < floor) {
+          log.push({ item: detail.name, msg: `Target R$ ${targetPrice} below floor R$ ${floor}, skipping`, time: Date.now() });
+          continue;
+        }
+
+        // Get our resellable instances
+        const instances = await getResellableInstances(detail.collectibleItemId, userId);
+        if (instances.length === 0) {
+          log.push({ item: detail.name, msg: "No resellable instances", time: Date.now() });
+          continue;
+        }
+
+        // Determine how many copies to list (capped by available instances)
+        const copiesToList = Math.min(listCount, instances.length);
+        let listedCount = 0;
+        let skippedCount = 0;
+        let twoFAHit = false;
+
+        for (let c = 0; c < copiesToList; c++) {
+          const inst = instances[c];
+
+          // Skip if this copy is already listed at the target price
+          if (inst.saleState === "OnSale" && inst.price === targetPrice) {
+            skippedCount++;
+            continue;
+          }
+
+          // Also skip if we're already the best seller and only listing 1 copy
+          if (c === 0 && copiesToList === 1 && bestSeller.sellerId === userId && bestSeller.price <= targetPrice) {
+            skippedCount++;
+            continue;
+          }
+
+          const result = await updateResalePrice(
+            detail.collectibleItemId,
+            inst.collectibleInstanceId,
+            inst.collectibleProductId,
+            targetPrice,
+            userId
+          );
+
+          if (result.needsChallenge) {
+            await addPending2FA({
+              itemName: detail.name,
+              assetId: detail.id,
+              targetPrice: targetPrice,
+              challengeId: result.challengeId,
+              challengeMetadata: result.challengeMetadata,
+              retryInfo: result.retryInfo,
+              userId,
+              time: Date.now(),
+              fromAutoList: true, // tag so we can resume after resolution
+            });
+            twoFAHit = true;
+            break; // 2FA blocks all subsequent copies too
+          }
+
+          listedCount++;
+
+          // Small delay between copies
+          if (c < copiesToList - 1) {
+            await sleep(500 + Math.random() * 1000);
+          }
+        }
+
+        if (twoFAHit) {
+          log.push({ item: detail.name, msg: `2FA required — queued (${listedCount} listed before)`, time: Date.now() });
+          break; // Stop processing more items — only one 2FA challenge at a time
+        } else if (listedCount > 0) {
+          const copyText = listedCount > 1 ? `${listedCount} copies` : "1 copy";
+          log.push({ item: detail.name, msg: `${copyText} at R$ ${targetPrice} (undercut R$ ${bestSeller.price})`, time: Date.now(), success: true });
+        } else {
+          log.push({ item: detail.name, msg: `Already listed at R$ ${targetPrice} (${skippedCount} copies)`, time: Date.now() });
+        }
+
+        // Random delay between items (2-5s) to look human
+        await sleep(2000 + Math.random() * 3000);
+
+      } catch (e) {
+        log.push({ item: detail.name, msg: `Error: ${e.message}`, time: Date.now() });
+      }
+    }
+  } catch (e) {
+    log.push({ msg: `Cycle error: ${e.message}`, time: Date.now() });
+  }
+
+  console.log("[AutoList] Cycle complete:", log);
+
+  // Persist last run log
+  await chrome.storage.local.set({ autoListLog: log, autoListLastRun: Date.now() });
+
+  // Invalidate item cache so popup shows fresh data
+  itemCache = { data: null, timestamp: 0 };
+
+  scheduleNextCycle(settings);
+  return { log };
+}
+
+function scheduleNextCycle(settings) {
+  if (autoListTimerId) clearTimeout(autoListTimerId);
+
+  if (!settings.enabled) {
+    autoListRunning = false;
+    return;
+  }
+
+  const intervalMs = settings.intervalMin * 60 * 1000;
+  const nextMs = randomJitter(intervalMs);
+  console.log(`[AutoList] Next cycle in ${Math.round(nextMs / 1000)}s`);
+
+  autoListTimerId = setTimeout(() => {
+    runAutoListCycle();
+  }, nextMs);
+
+  autoListRunning = true;
+}
+
+function startAutoList(settings) {
+  settings.enabled = true;
+  saveAutoListSettings(settings);
+  // Run first cycle immediately
+  runAutoListCycle();
+}
+
+function stopAutoList() {
+  if (autoListTimerId) clearTimeout(autoListTimerId);
+  autoListTimerId = null;
+  autoListRunning = false;
+  getAutoListSettings().then((s) => {
+    s.enabled = false;
+    saveAutoListSettings(s);
+  });
+}
+
 // --- Reseller Lookup ---
 
 async function getLowestReseller(collectibleItemId) {
@@ -337,9 +573,10 @@ async function handleGetItems(forceRefresh = false) {
     console.warn("[UGC] Not authenticated:", e.message);
   }
 
-  const [catalogDetails, thumbnails] = await Promise.all([
+  const [catalogDetails, thumbnails, autoSettings] = await Promise.all([
     getCatalogDetails(watchlist),
     getThumbnails(watchlist),
+    getAutoListSettings(),
   ]);
 
   // Fetch resellable instances for items that have a collectibleItemId
@@ -362,6 +599,8 @@ async function handleGetItems(forceRefresh = false) {
       userLowestPrice: null,
       isBestPrice: false,
       bestSeller: null,
+      priceFloor: autoSettings.priceFloors[detail.id] || 0,
+      listCount: autoSettings.listCounts[detail.id] || 1,
       allInstances: [],
     };
 
@@ -551,6 +790,139 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     verify2FAAndRetry(challengeId, challengeMetadata, code, userId, retryInfo)
       .then(sendResponse)
       .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_AUTOLIST_STATE") {
+    getAutoListSettings().then((settings) => {
+      chrome.storage.local.get(["autoListLog", "autoListLastRun"], (data) => {
+        sendResponse({
+          settings,
+          running: autoListRunning,
+          log: data.autoListLog || [],
+          lastRun: data.autoListLastRun || null,
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message.type === "START_AUTOLIST") {
+    const settings = message.settings;
+    startAutoList(settings);
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === "STOP_AUTOLIST") {
+    stopAutoList();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === "SAVE_AUTOLIST_SETTINGS") {
+    saveAutoListSettings(message.settings)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GET_PENDING_2FA") {
+    getPending2FA()
+      .then((queue) => sendResponse({ queue }))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "RESOLVE_PENDING_2FA") {
+    const { index, code, userId } = message;
+    getPending2FA().then(async (queue) => {
+      if (index < 0 || index >= queue.length) {
+        sendResponse({ error: "Invalid challenge index" });
+        return;
+      }
+      const entry = queue[index];
+      try {
+        const result = await verify2FAAndRetry(
+          entry.challengeId,
+          entry.challengeMetadata,
+          code,
+          entry.userId,
+          entry.retryInfo
+        );
+        await removePending2FA(index);
+        itemCache = { data: null, timestamp: 0 }; // invalidate cache
+        sendResponse({ success: true, itemName: entry.itemName, price: entry.targetPrice });
+
+        // If this was from auto-list and auto-list is still running,
+        // schedule a quick follow-up cycle to process remaining items.
+        // Items already listed at target price will be skipped automatically.
+        if (entry.fromAutoList && autoListRunning) {
+          const delayMs = 5000 + Math.random() * 5000; // 5-10s delay
+          console.log(`[AutoList] 2FA resolved for ${entry.itemName}, resuming cycle in ${Math.round(delayMs / 1000)}s`);
+          if (autoListTimerId) clearTimeout(autoListTimerId);
+          autoListTimerId = setTimeout(() => {
+            runAutoListCycle();
+          }, delayMs);
+        }
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true;
+  }
+
+  if (message.type === "DISMISS_PENDING_2FA") {
+    removePending2FA(message.index)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "UPDATE_MULTI_PRICE") {
+    const { collectibleItemId, instances, price, userId } = message;
+    (async () => {
+      const results = { listed: 0, failed: 0, twoFA: false, challengeData: null };
+      for (let i = 0; i < instances.length; i++) {
+        const inst = instances[i];
+        try {
+          const result = await updateResalePrice(
+            collectibleItemId,
+            inst.collectibleInstanceId,
+            inst.collectibleProductId,
+            price,
+            userId
+          );
+          if (result.needsChallenge) {
+            results.twoFA = true;
+            results.challengeData = result;
+            break;
+          }
+          results.listed++;
+          if (i < instances.length - 1) await sleep(500 + Math.random() * 1000);
+        } catch (e) {
+          results.failed++;
+        }
+      }
+      itemCache = { data: null, timestamp: 0 };
+      sendResponse(results);
+    })();
+    return true;
+  }
+
+  if (message.type === "SET_LIST_COUNT") {
+    getAutoListSettings().then((settings) => {
+      settings.listCounts[message.assetId] = Number(message.count) || 1;
+      saveAutoListSettings(settings).then(() => sendResponse({ success: true }));
+    });
+    return true;
+  }
+
+  if (message.type === "SET_PRICE_FLOOR") {
+    getAutoListSettings().then((settings) => {
+      settings.priceFloors[message.assetId] = Number(message.floor) || 0;
+      saveAutoListSettings(settings).then(() => sendResponse({ success: true }));
+    });
     return true;
   }
 });

@@ -11,6 +11,91 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let currentUserId = null;
 
+  // --- Auto-List Panel ---
+  const autolistToggle = document.getElementById("autolist-toggle");
+  const autolistBody = document.getElementById("autolist-body");
+  const autolistArrow = document.getElementById("autolist-arrow");
+  const autolistBadge = document.getElementById("autolist-badge");
+  const autolistInterval = document.getElementById("autolist-interval");
+  const autolistUndercut = document.getElementById("autolist-undercut");
+  const autolistStartBtn = document.getElementById("autolist-start");
+  const autolistStopBtn = document.getElementById("autolist-stop");
+  const autolistStatus = document.getElementById("autolist-status");
+  const autolistLogEl = document.getElementById("autolist-log");
+
+  let autolistOpen = false;
+
+  autolistToggle.addEventListener("click", () => {
+    autolistOpen = !autolistOpen;
+    autolistBody.classList.toggle("hidden", !autolistOpen);
+    autolistArrow.innerHTML = autolistOpen ? "&#9650;" : "&#9660;";
+  });
+
+  autolistStartBtn.addEventListener("click", async () => {
+    const settings = {
+      enabled: true,
+      intervalMin: Math.max(3, Number(autolistInterval.value) || 5),
+      undercutAmount: Math.max(1, Number(autolistUndercut.value) || 1),
+      priceFloors: {},
+      listCounts: {},
+    };
+
+    // Preserve existing price floors and list counts
+    const state = await chrome.runtime.sendMessage({ type: "GET_AUTOLIST_STATE" });
+    if (state.settings) {
+      if (state.settings.priceFloors) settings.priceFloors = state.settings.priceFloors;
+      if (state.settings.listCounts) settings.listCounts = state.settings.listCounts;
+    }
+
+    await chrome.runtime.sendMessage({ type: "START_AUTOLIST", settings });
+    updateAutolistUI(true);
+  });
+
+  autolistStopBtn.addEventListener("click", async () => {
+    await chrome.runtime.sendMessage({ type: "STOP_AUTOLIST" });
+    updateAutolistUI(false);
+  });
+
+  function updateAutolistUI(running) {
+    autolistStartBtn.classList.toggle("hidden", running);
+    autolistStopBtn.classList.toggle("hidden", !running);
+    autolistBadge.classList.toggle("hidden", !running);
+    autolistInterval.disabled = running;
+    autolistUndercut.disabled = running;
+  }
+
+  function renderAutolistLog(log) {
+    if (!log || log.length === 0) {
+      autolistLogEl.classList.add("hidden");
+      return;
+    }
+    autolistLogEl.classList.remove("hidden");
+    autolistLogEl.innerHTML = "<div class='autolist-log-title'>Last cycle:</div>" +
+      log.map((entry) => {
+        const cls = entry.success ? "log-success" : "";
+        const name = entry.item ? `<strong>${entry.item}</strong>: ` : "";
+        return `<div class="autolist-log-entry ${cls}">${name}${entry.msg}</div>`;
+      }).join("");
+  }
+
+  async function loadAutolistState() {
+    const state = await chrome.runtime.sendMessage({ type: "GET_AUTOLIST_STATE" });
+    if (state.settings) {
+      autolistInterval.value = state.settings.intervalMin || 5;
+      autolistUndercut.value = state.settings.undercutAmount || 1;
+    }
+    updateAutolistUI(state.running);
+    if (state.lastRun) {
+      autolistStatus.classList.remove("hidden");
+      const ago = Math.round((Date.now() - state.lastRun) / 1000);
+      const agoText = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+      autolistStatus.textContent = `Last run: ${agoText}`;
+    }
+    renderAutolistLog(state.log);
+  }
+
+  loadAutolistState();
+
   function showState(state) {
     loadingEl.classList.toggle("hidden", state !== "loading");
     errorEl.classList.toggle("hidden", state !== "error");
@@ -104,6 +189,33 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
     }
 
+    // Per-item price floor
+    let floorHtml = "";
+    if (canSell) {
+      const floorVal = item.priceFloor || "";
+      floorHtml = `
+        <div class="floor-row">
+          <label class="floor-label">Floor:</label>
+          <input type="number" class="floor-input" min="0" placeholder="None" value="${floorVal}">
+          <button class="floor-save-btn" title="Save floor price">&#10003;</button>
+        </div>
+      `;
+    }
+
+    // List count (only for items with 2+ copies)
+    let listCountHtml = "";
+    if (canSell && item.ownedCount >= 2) {
+      const countVal = item.listCount || 1;
+      listCountHtml = `
+        <div class="listcount-row">
+          <label class="listcount-label">List #:</label>
+          <input type="number" class="listcount-input" min="1" max="${item.ownedCount}" value="${countVal}">
+          <span class="listcount-max">/ ${item.ownedCount}</span>
+          <button class="listcount-save-btn" title="Save list count">&#10003;</button>
+        </div>
+      `;
+    }
+
     let priceEditHtml = "";
     if (canSell) {
       priceEditHtml = `
@@ -111,6 +223,8 @@ document.addEventListener("DOMContentLoaded", () => {
           <input type="number" class="price-input" min="1" placeholder="${activeInstance.resalePrice || "Price"}" value="${activeInstance.resalePrice || ""}">
           <button class="price-save-btn">Set Price</button>
         </div>
+        ${listCountHtml}
+        ${floorHtml}
         <div class="price-status hidden"></div>
       `;
     }
@@ -193,6 +307,47 @@ document.addEventListener("DOMContentLoaded", () => {
           updatePrice(item, priceInput, saveBtn, statusEl, card, activeInstance);
         }
       });
+
+      // List count save
+      const listcountSaveBtn = card.querySelector(".listcount-save-btn");
+      const listcountInput = card.querySelector(".listcount-input");
+      if (listcountSaveBtn && listcountInput) {
+        async function saveListCount() {
+          const val = Math.max(1, Math.min(item.ownedCount, Number(listcountInput.value) || 1));
+          listcountInput.value = val;
+          await chrome.runtime.sendMessage({ type: "SET_LIST_COUNT", assetId: item.assetId, count: val });
+          listcountSaveBtn.textContent = "\u2713";
+          listcountSaveBtn.classList.add("saved");
+          setTimeout(() => {
+            listcountSaveBtn.textContent = "\u2713";
+            listcountSaveBtn.classList.remove("saved");
+          }, 1500);
+        }
+        listcountSaveBtn.addEventListener("click", saveListCount);
+        listcountInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") saveListCount();
+        });
+      }
+
+      // Floor price save
+      const floorSaveBtn = card.querySelector(".floor-save-btn");
+      const floorInput = card.querySelector(".floor-input");
+      if (floorSaveBtn && floorInput) {
+        async function saveFloor() {
+          const val = Number(floorInput.value) || 0;
+          await chrome.runtime.sendMessage({ type: "SET_PRICE_FLOOR", assetId: item.assetId, floor: val });
+          floorSaveBtn.textContent = "\u2713";
+          floorSaveBtn.classList.add("saved");
+          setTimeout(() => {
+            floorSaveBtn.textContent = "\u2713";
+            floorSaveBtn.classList.remove("saved");
+          }, 1500);
+        }
+        floorSaveBtn.addEventListener("click", saveFloor);
+        floorInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") saveFloor();
+        });
+      }
     }
 
     return card;
@@ -208,10 +363,58 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // Check if multi-copy listing is requested
+    const listcountInput = cardEl.querySelector(".listcount-input");
+    const copyCount = listcountInput ? Math.max(1, Number(listcountInput.value) || 1) : 1;
+
     btnEl.disabled = true;
-    statusEl.textContent = "Updating...";
     statusEl.className = "price-status";
     statusEl.classList.remove("hidden");
+
+    // Multi-copy listing
+    if (copyCount > 1 && item.allInstances && item.allInstances.length >= 2) {
+      const instancesToList = item.allInstances.slice(0, copyCount);
+      statusEl.textContent = `Listing ${instancesToList.length} copies...`;
+
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "UPDATE_MULTI_PRICE",
+          collectibleItemId: item.collectibleItemId,
+          instances: instancesToList,
+          price,
+          userId: currentUserId,
+        });
+
+        if (response.twoFA) {
+          const msg = response.listed > 0 ? `${response.listed} listed, then 2FA required` : "2FA required";
+          show2FAModal(response.challengeData, price, statusEl, btnEl, cardEl);
+          if (response.listed > 0) {
+            showToast(`${response.listed} cop${response.listed !== 1 ? "ies" : "y"} listed!`);
+          }
+          return;
+        }
+
+        const totalMsg = `${response.listed} cop${response.listed !== 1 ? "ies" : "y"} listed!`;
+        showToast(totalMsg);
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+
+        const saleStateEl = cardEl.querySelector(".item-sale-state");
+        if (saleStateEl) {
+          saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
+          saleStateEl.className = "item-sale-state on-sale";
+        }
+      } catch (err) {
+        statusEl.textContent = err.message;
+        statusEl.className = "price-status error";
+      }
+
+      btnEl.disabled = false;
+      return;
+    }
+
+    // Single copy listing
+    statusEl.textContent = "Updating...";
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -227,11 +430,18 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = response.error;
         statusEl.className = "price-status error";
       } else if (response.needsChallenge) {
-        // Show 2FA input
-        show2FAPrompt(response, price, statusEl, btnEl, cardEl);
+        show2FAModal(response, price, statusEl, btnEl, cardEl);
         return;
       } else {
-        onPriceUpdateSuccess(price, statusEl, cardEl);
+        showToast("Listed Successfully!");
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+
+        const saleStateEl = cardEl.querySelector(".item-sale-state");
+        if (saleStateEl) {
+          saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
+          saleStateEl.className = "item-sale-state on-sale";
+        }
       }
     } catch (err) {
       statusEl.textContent = err.message;
@@ -241,53 +451,159 @@ document.addEventListener("DOMContentLoaded", () => {
     btnEl.disabled = false;
   }
 
-  function onPriceUpdateSuccess(price, statusEl, cardEl) {
-    statusEl.textContent = "Price updated!";
-    statusEl.className = "price-status success";
+  // --- Global 2FA Modal & Success Toast ---
+  const modal = document.getElementById("twofa-modal");
+  const modalItemName = document.getElementById("modal-item-name");
+  const modalDesc = document.getElementById("modal-desc");
+  const modalInput = document.getElementById("modal-2fa-input");
+  const modalSubmit = document.getElementById("modal-2fa-submit");
+  const modalError = document.getElementById("modal-2fa-error");
+  const modalSkip = document.getElementById("modal-2fa-skip");
+  const modalCount = document.getElementById("modal-2fa-count");
+  const toast = document.getElementById("success-toast");
+  const toastMsg = document.getElementById("toast-msg");
 
-    const saleStateEl = cardEl.querySelector(".item-sale-state");
-    if (saleStateEl) {
-      saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
-      saleStateEl.className = "item-sale-state on-sale";
-    }
+  let pendingQueue = [];
+  let currentPendingIdx = 0;
+  let modalResolveCallback = null; // for manual price update flow
+
+  function showToast(msg) {
+    toastMsg.textContent = msg;
+    toast.classList.remove("hidden");
+    setTimeout(() => toast.classList.add("hidden"), 3000);
   }
 
-  function show2FAPrompt(challengeData, price, statusEl, btnEl, cardEl) {
-    statusEl.className = "price-status";
-    statusEl.classList.remove("hidden");
-    statusEl.innerHTML = "";
+  function openModal(opts) {
+    // opts: { itemName, desc, onSubmit(code), onSkip(), count }
+    modalItemName.textContent = opts.itemName || "";
+    modalDesc.textContent = opts.desc || "";
+    modalInput.value = "";
+    modalInput.disabled = false;
+    modalSubmit.disabled = false;
+    modalError.classList.add("hidden");
+    modalCount.textContent = opts.count || "";
+    modal.classList.remove("hidden");
+    setTimeout(() => modalInput.focus(), 50);
 
-    const wrapper = document.createElement("div");
-    wrapper.className = "twofa-prompt";
-    wrapper.innerHTML = `
-      <div class="twofa-label">Enter 2FA code:</div>
-      <div class="twofa-row">
-        <input type="text" class="twofa-input" maxlength="6" placeholder="000000" inputmode="numeric" autocomplete="one-time-code">
-        <button class="twofa-submit-btn">Verify</button>
-      </div>
-    `;
+    // Remove old listeners by cloning
+    const newSubmit = modalSubmit.cloneNode(true);
+    modalSubmit.parentNode.replaceChild(newSubmit, modalSubmit);
+    const newSkip = modalSkip.cloneNode(true);
+    modalSkip.parentNode.replaceChild(newSkip, modalSkip);
+    const newInput = modalInput.cloneNode(true);
+    modalInput.parentNode.replaceChild(newInput, modalInput);
 
-    statusEl.appendChild(wrapper);
+    // Re-grab references after clone
+    const submitBtn = document.getElementById("modal-2fa-submit");
+    const skipBtn = document.getElementById("modal-2fa-skip");
+    const inputEl = document.getElementById("modal-2fa-input");
+    const errorEl = document.getElementById("modal-2fa-error");
 
-    const codeInput = wrapper.querySelector(".twofa-input");
-    const submitBtn = wrapper.querySelector(".twofa-submit-btn");
-
-    codeInput.focus();
-
-    async function submit2FA() {
-      const code = codeInput.value.trim();
+    async function handleSubmit() {
+      const code = inputEl.value.trim();
       if (!/^\d{6}$/.test(code)) {
-        statusEl.innerHTML = "";
-        statusEl.textContent = "Enter a 6-digit code";
-        statusEl.className = "price-status error";
-        btnEl.disabled = false;
+        errorEl.textContent = "Enter a 6-digit code";
+        errorEl.classList.remove("hidden");
         return;
       }
-
+      errorEl.classList.add("hidden");
       submitBtn.disabled = true;
-      codeInput.disabled = true;
+      inputEl.disabled = true;
+      submitBtn.textContent = "Verifying...";
 
       try {
+        await opts.onSubmit(code);
+      } catch (err) {
+        errorEl.textContent = err.message || "Verification failed";
+        errorEl.classList.remove("hidden");
+        submitBtn.disabled = false;
+        inputEl.disabled = false;
+        submitBtn.textContent = "Verify";
+      }
+    }
+
+    submitBtn.addEventListener("click", handleSubmit);
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") handleSubmit();
+    });
+    skipBtn.addEventListener("click", () => {
+      if (opts.onSkip) opts.onSkip();
+    });
+  }
+
+  function closeModal() {
+    modal.classList.add("hidden");
+  }
+
+  // Check for pending 2FA challenges on popup load
+  async function checkPending2FA() {
+    const res = await chrome.runtime.sendMessage({ type: "GET_PENDING_2FA" });
+    if (res.error || !res.queue || res.queue.length === 0) return;
+    pendingQueue = res.queue;
+    currentPendingIdx = 0;
+    showNextPending();
+  }
+
+  function showNextPending() {
+    if (currentPendingIdx >= pendingQueue.length) {
+      closeModal();
+      return;
+    }
+
+    const entry = pendingQueue[currentPendingIdx];
+    const remaining = pendingQueue.length - currentPendingIdx;
+
+    openModal({
+      itemName: entry.itemName,
+      desc: `List for R$ ${formatPrice(entry.targetPrice)}`,
+      count: remaining > 1 ? `${currentPendingIdx + 1} of ${pendingQueue.length}` : "",
+      onSubmit: async (code) => {
+        const response = await chrome.runtime.sendMessage({
+          type: "RESOLVE_PENDING_2FA",
+          index: 0, // always 0 because we remove from front
+          code,
+          userId: entry.userId,
+        });
+
+        if (response.error) {
+          throw new Error(response.error);
+        }
+
+        showToast(`Listed Successfully! ${entry.itemName} at R$ ${formatPrice(entry.targetPrice)}`);
+        pendingQueue.splice(currentPendingIdx, 1);
+
+        if (pendingQueue.length > 0) {
+          // Show next one after brief pause
+          setTimeout(() => showNextPending(), 500);
+        } else {
+          closeModal();
+          loadItems(true); // refresh to show new data
+        }
+      },
+      onSkip: async () => {
+        await chrome.runtime.sendMessage({ type: "DISMISS_PENDING_2FA", index: 0 });
+        pendingQueue.splice(currentPendingIdx, 1);
+
+        if (pendingQueue.length > 0) {
+          showNextPending();
+        } else {
+          closeModal();
+        }
+      },
+    });
+  }
+
+  // For manual price update — show modal instead of inline
+  function show2FAModal(challengeData, price, statusEl, btnEl, cardEl) {
+    statusEl.textContent = "2FA required...";
+    statusEl.className = "price-status";
+    statusEl.classList.remove("hidden");
+
+    openModal({
+      itemName: "Manual Price Update",
+      desc: `Setting price to R$ ${formatPrice(price)}`,
+      count: "",
+      onSubmit: async (code) => {
         const response = await chrome.runtime.sendMessage({
           type: "VERIFY_2FA",
           challengeId: challengeData.challengeId,
@@ -297,26 +613,31 @@ document.addEventListener("DOMContentLoaded", () => {
           retryInfo: challengeData.retryInfo,
         });
 
-        statusEl.innerHTML = "";
-
         if (response.error) {
-          statusEl.textContent = response.error;
-          statusEl.className = "price-status error";
-        } else {
-          onPriceUpdateSuccess(price, statusEl, cardEl);
+          throw new Error(response.error);
         }
-      } catch (err) {
-        statusEl.innerHTML = "";
-        statusEl.textContent = err.message;
+
+        closeModal();
+        showToast("Listed Successfully!");
+
+        // Update the card UI
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+
+        const saleStateEl = cardEl.querySelector(".item-sale-state");
+        if (saleStateEl) {
+          saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
+          saleStateEl.className = "item-sale-state on-sale";
+        }
+
+        btnEl.disabled = false;
+      },
+      onSkip: () => {
+        closeModal();
+        statusEl.textContent = "2FA skipped";
         statusEl.className = "price-status error";
-      }
-
-      btnEl.disabled = false;
-    }
-
-    submitBtn.addEventListener("click", submit2FA);
-    codeInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") submit2FA();
+        btnEl.disabled = false;
+      },
     });
   }
 
@@ -439,4 +760,5 @@ document.addEventListener("DOMContentLoaded", () => {
   refreshBtn.addEventListener("click", () => loadItems(true));
 
   loadItems();
+  checkPending2FA();
 });
