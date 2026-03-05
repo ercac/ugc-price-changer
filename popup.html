@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UGC Price Changer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <div class="header">
+      <h1>UGC Price Changer</h1>
+      <button id="refresh-btn" class="refresh-btn" title="Refresh prices">&#x21bb;</button>
+    </div>
+
+    <div class="add-item">
+      <input type="text" id="asset-input" placeholder="Asset ID or catalog URL" spellcheck="false">
+      <button id="add-btn">Add</button>
+    </div>
+
+    <div id="add-error" class="add-error hidden"></div>
+
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <p>Loading items...</p>
+    </div>
+
+    <div id="error" class="error hidden">
+      <p id="error-message"></p>
+    </div>
+
+    <div id="item-list" class="item-list hidden"></div>
+
+    <div id="empty" class="empty">
+      <p>No items yet. Add a UGC limited by asset ID or catalog URL above.</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,417 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 380px;
+  min-height: 200px;
+  max-height: 520px;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background-color: #232527;
+  color: #e0e0e0;
+  overflow-y: auto;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background-color: #1a1c1e;
+  border-bottom: 1px solid #393b3d;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.header h1 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.refresh-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #aaa;
+  font-size: 18px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.refresh-btn:hover {
+  background-color: #393b3d;
+  color: #fff;
+}
+
+/* Add item bar */
+.add-item {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #393b3d;
+  background-color: #1e2022;
+}
+
+.add-item input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #393b3d;
+  border-radius: 6px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.add-item input::placeholder {
+  color: #666;
+}
+
+.add-item input:focus {
+  border-color: #00b06f;
+}
+
+.add-item button {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 6px;
+  background-color: #00b06f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  flex-shrink: 0;
+}
+
+.add-item button:hover {
+  background-color: #00994f;
+}
+
+.add-item button:disabled {
+  background-color: #393b3d;
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* Add error */
+.add-error {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: #e74c3c;
+  background-color: #2a1a1a;
+  border-bottom: 1px solid #393b3d;
+}
+
+/* Loading state */
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  gap: 16px;
+}
+
+.loading p {
+  font-size: 13px;
+  color: #888;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #393b3d;
+  border-top-color: #00b06f;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error state */
+.error {
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.error p {
+  font-size: 13px;
+  color: #e74c3c;
+}
+
+/* Empty state */
+.empty {
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.empty p {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+}
+
+/* Item list */
+.item-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.item-count {
+  font-size: 11px;
+  color: #666;
+  padding: 6px 16px 2px;
+  border-bottom: 1px solid #2e3032;
+}
+
+.item-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2e3032;
+  transition: background-color 0.15s;
+}
+
+.item-card:hover {
+  background-color: #2a2c2e;
+}
+
+.item-card:last-child {
+  border-bottom: none;
+}
+
+.item-thumbnail {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background-color: #393b3d;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+
+.item-name:hover {
+  text-decoration: underline;
+  color: #4da6ff;
+}
+
+.item-creator {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.item-price {
+  font-size: 12px;
+  color: #00b06f;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.item-remove {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background-color 0.15s;
+  flex-shrink: 0;
+}
+
+.item-remove:hover {
+  color: #e74c3c;
+  background-color: #3a2020;
+}
+
+/* Price editing row */
+.item-price-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.price-input {
+  width: 80px;
+  padding: 3px 6px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.price-input:focus {
+  border-color: #00b06f;
+}
+
+.price-input::placeholder {
+  color: #555;
+}
+
+.price-save-btn {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background-color: #00b06f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.price-save-btn:hover {
+  background-color: #00994f;
+}
+
+.price-save-btn:disabled {
+  background-color: #393b3d;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.price-status {
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.price-status.success {
+  color: #00b06f;
+}
+
+.price-status.error {
+  color: #e74c3c;
+}
+
+.item-sale-state {
+  font-size: 10px;
+  color: #e67e22;
+  margin-top: 2px;
+}
+
+.item-sale-state.on-sale {
+  color: #00b06f;
+}
+
+.item-owned {
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 2px;
+}
+
+.item-best-seller {
+  font-size: 10px;
+  font-weight: 500;
+  color: #aaa;
+  margin-top: 2px;
+}
+
+.item-best-seller.is-you {
+  color: #ffd700;
+  font-weight: 600;
+}
+
+.best-seller-link {
+  color: #4da6ff;
+  text-decoration: none;
+}
+
+.best-seller-link:hover {
+  text-decoration: underline;
+}
+
+/* 2FA prompt */
+.twofa-prompt {
+  margin-top: 4px;
+}
+
+.twofa-label {
+  font-size: 11px;
+  color: #aaa;
+  margin-bottom: 4px;
+}
+
+.twofa-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.twofa-input {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: monospace;
+  letter-spacing: 2px;
+  text-align: center;
+  outline: none;
+}
+
+.twofa-input:focus {
+  border-color: #00b06f;
+}
+
+.twofa-submit-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background-color: #00b06f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.twofa-submit-btn:hover {
+  background-color: #00994f;
+}
+
+.twofa-submit-btn:disabled {
+  background-color: #393b3d;
+  color: #666;
+  cursor: not-allowed;
+}
