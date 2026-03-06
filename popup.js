@@ -22,13 +22,103 @@ document.addEventListener("DOMContentLoaded", () => {
   const autolistStopBtn = document.getElementById("autolist-stop");
   const autolistStatus = document.getElementById("autolist-status");
   const autolistLogEl = document.getElementById("autolist-log");
+  const protectedAddInput = document.getElementById("autolist-protected-input");
+  const protectedAddBtn = document.getElementById("autolist-protected-add");
+  const protectedListEl = document.getElementById("autolist-protected-list");
 
   let autolistOpen = false;
+  let protectedSellers = []; // [{ id, username, avatarUrl }]
 
   autolistToggle.addEventListener("click", () => {
     autolistOpen = !autolistOpen;
     autolistBody.classList.toggle("hidden", !autolistOpen);
     autolistArrow.innerHTML = autolistOpen ? "&#9650;" : "&#9660;";
+  });
+
+  // --- Protected Sellers chip management ---
+
+  function renderProtectedChips(disabled) {
+    protectedListEl.innerHTML = "";
+    for (const seller of protectedSellers) {
+      const chip = document.createElement("div");
+      chip.className = "autolist-protected-chip";
+
+      const img = document.createElement("img");
+      img.src = seller.avatarUrl || "";
+      img.alt = seller.username;
+      img.onerror = () => { img.style.display = "none"; };
+      chip.appendChild(img);
+
+      const name = document.createElement("span");
+      name.className = "chip-name";
+      name.textContent = seller.username;
+      name.title = `${seller.username} (${seller.id})`;
+      chip.appendChild(name);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "chip-remove";
+      removeBtn.innerHTML = "&times;";
+      removeBtn.title = "Remove";
+      removeBtn.disabled = !!disabled;
+      removeBtn.addEventListener("click", () => removeProtectedSeller(seller.id));
+      chip.appendChild(removeBtn);
+
+      protectedListEl.appendChild(chip);
+    }
+  }
+
+  async function saveProtectedSellers() {
+    await chrome.runtime.sendMessage({ type: "SET_PROTECTED_SELLERS", sellers: protectedSellers });
+  }
+
+  async function addProtectedSeller() {
+    const raw = protectedAddInput.value.trim();
+    const userId = Number(raw);
+    if (!userId || userId <= 0 || !Number.isInteger(userId)) {
+      protectedAddInput.style.borderColor = "#e74c3c";
+      setTimeout(() => { protectedAddInput.style.borderColor = ""; }, 1500);
+      return;
+    }
+
+    // Check duplicate
+    if (protectedSellers.some((s) => s.id === userId)) {
+      protectedAddInput.value = "";
+      return;
+    }
+
+    protectedAddBtn.disabled = true;
+    protectedAddBtn.textContent = "...";
+
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "LOOKUP_USER", userId });
+      if (!res || res.error) {
+        protectedAddInput.style.borderColor = "#e74c3c";
+        setTimeout(() => { protectedAddInput.style.borderColor = ""; }, 1500);
+        return;
+      }
+
+      protectedSellers.push({ id: res.id, username: res.username, avatarUrl: res.avatarUrl });
+      await saveProtectedSellers();
+      renderProtectedChips(false);
+      protectedAddInput.value = "";
+    } catch (err) {
+      protectedAddInput.style.borderColor = "#e74c3c";
+      setTimeout(() => { protectedAddInput.style.borderColor = ""; }, 1500);
+    } finally {
+      protectedAddBtn.disabled = false;
+      protectedAddBtn.textContent = "Add";
+    }
+  }
+
+  async function removeProtectedSeller(id) {
+    protectedSellers = protectedSellers.filter((s) => s.id !== id);
+    await saveProtectedSellers();
+    renderProtectedChips(false);
+  }
+
+  protectedAddBtn.addEventListener("click", addProtectedSeller);
+  protectedAddInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addProtectedSeller();
   });
 
   autolistStartBtn.addEventListener("click", async () => {
@@ -38,6 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
       undercutAmount: Math.max(1, Number(autolistUndercut.value) || 1),
       priceFloors: {},
       listCounts: {},
+      protectedSellers: protectedSellers,
     };
 
     // Preserve existing price floors and list counts
@@ -62,6 +153,9 @@ document.addEventListener("DOMContentLoaded", () => {
     autolistBadge.classList.toggle("hidden", !running);
     autolistInterval.disabled = running;
     autolistUndercut.disabled = running;
+    protectedAddInput.disabled = running;
+    protectedAddBtn.disabled = running;
+    renderProtectedChips(running);
   }
 
   function renderAutolistLog(log) {
@@ -83,6 +177,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.settings) {
       autolistInterval.value = state.settings.intervalMin || 5;
       autolistUndercut.value = state.settings.undercutAmount || 1;
+      if (state.settings.protectedSellers && state.settings.protectedSellers.length > 0) {
+        protectedSellers = state.settings.protectedSellers;
+        renderProtectedChips(state.running);
+      }
     }
     updateAutolistUI(state.running);
     if (state.lastRun) {
@@ -156,7 +254,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const sellerLink = item.bestSeller.sellerId
         ? `<a href="https://www.roblox.com/users/${item.bestSeller.sellerId}/profile" target="_blank" class="best-seller-link">${item.bestSeller.sellerName}</a>`
         : item.bestSeller.sellerName;
-      bestSellerHtml = `<div class="item-best-seller${item.isBestPrice ? " is-you" : ""}">Best: R$ ${formatPrice(item.bestSeller.price)} by ${sellerLink}${item.isBestPrice ? " (You!)" : ""}</div>`;
+      const bestClass = item.isBestPrice ? " is-you" : item.isProtectedSeller ? " is-alt" : "";
+      const bestTag = item.isBestPrice ? " (You!)" : item.isProtectedSeller ? " (Alt)" : "";
+      bestSellerHtml = `<div class="item-best-seller${bestClass}">Best: R$ ${formatPrice(item.bestSeller.price)} by ${sellerLink}${bestTag}</div>`;
     } else if (item.isBestPrice) {
       bestSellerHtml = `<div class="item-best-seller is-you">Best Price (You!)</div>`;
     }
@@ -371,45 +471,35 @@ document.addEventListener("DOMContentLoaded", () => {
     statusEl.className = "price-status";
     statusEl.classList.remove("hidden");
 
-    // Multi-copy listing
+    // Multi-copy listing (with automatic 2FA continuation)
     if (copyCount > 1 && item.allInstances && item.allInstances.length >= 2) {
       const instancesToList = item.allInstances.slice(0, copyCount);
-      statusEl.textContent = `Listing ${instancesToList.length} copies...`;
+      let multiError = false;
 
       try {
-        const response = await chrome.runtime.sendMessage({
-          type: "UPDATE_MULTI_PRICE",
-          collectibleItemId: item.collectibleItemId,
-          instances: instancesToList,
-          price,
-          userId: currentUserId,
-        });
+        const totalListed = await listMultipleCopies(item, instancesToList, price, statusEl);
 
-        if (response.twoFA) {
-          const msg = response.listed > 0 ? `${response.listed} listed, then 2FA required` : "2FA required";
-          show2FAModal(response.challengeData, price, statusEl, btnEl, cardEl);
-          if (response.listed > 0) {
-            showToast(`${response.listed} cop${response.listed !== 1 ? "ies" : "y"} listed!`);
+        if (totalListed > 0) {
+          showToast(`${totalListed} cop${totalListed !== 1 ? "ies" : "y"} listed at R$ ${formatPrice(price)}`);
+          const saleStateEl = cardEl.querySelector(".item-sale-state");
+          if (saleStateEl) {
+            saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
+            saleStateEl.className = "item-sale-state on-sale";
           }
-          return;
-        }
-
-        const totalMsg = `${response.listed} cop${response.listed !== 1 ? "ies" : "y"} listed!`;
-        showToast(totalMsg);
-        statusEl.textContent = "";
-        statusEl.classList.add("hidden");
-
-        const saleStateEl = cardEl.querySelector(".item-sale-state");
-        if (saleStateEl) {
-          saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
-          saleStateEl.className = "item-sale-state on-sale";
+        } else {
+          showToast("No copies listed");
         }
       } catch (err) {
         statusEl.textContent = err.message;
         statusEl.className = "price-status error";
+        multiError = true;
       }
 
       btnEl.disabled = false;
+      if (!multiError) {
+        statusEl.textContent = "";
+        statusEl.classList.add("hidden");
+      }
       return;
     }
 
@@ -453,19 +543,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // --- Global 2FA Modal & Success Toast ---
   const modal = document.getElementById("twofa-modal");
-  const modalItemName = document.getElementById("modal-item-name");
-  const modalDesc = document.getElementById("modal-desc");
-  const modalInput = document.getElementById("modal-2fa-input");
-  const modalSubmit = document.getElementById("modal-2fa-submit");
-  const modalError = document.getElementById("modal-2fa-error");
-  const modalSkip = document.getElementById("modal-2fa-skip");
-  const modalCount = document.getElementById("modal-2fa-count");
   const toast = document.getElementById("success-toast");
   const toastMsg = document.getElementById("toast-msg");
 
   let pendingQueue = [];
   let currentPendingIdx = 0;
-  let modalResolveCallback = null; // for manual price update flow
 
   function showToast(msg) {
     toastMsg.textContent = msg;
@@ -475,29 +557,41 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function openModal(opts) {
     // opts: { itemName, desc, onSubmit(code), onSkip(), count }
-    modalItemName.textContent = opts.itemName || "";
-    modalDesc.textContent = opts.desc || "";
-    modalInput.value = "";
-    modalInput.disabled = false;
-    modalSubmit.disabled = false;
-    modalError.classList.add("hidden");
-    modalCount.textContent = opts.count || "";
+
+    // Always get fresh DOM references (elements may have been cloned previously)
+    const curItemName = document.getElementById("modal-item-name");
+    const curDesc = document.getElementById("modal-desc");
+    const curInput = document.getElementById("modal-2fa-input");
+    const curSubmit = document.getElementById("modal-2fa-submit");
+    const curError = document.getElementById("modal-2fa-error");
+    const curSkip = document.getElementById("modal-2fa-skip");
+    const curCount = document.getElementById("modal-2fa-count");
+
+    curItemName.textContent = opts.itemName || "";
+    curDesc.textContent = opts.desc || "";
+    curInput.value = "";
+    curInput.disabled = false;
+    curSubmit.disabled = false;
+    curSubmit.textContent = "Verify";
+    curError.classList.add("hidden");
+    curCount.textContent = opts.count || "";
     modal.classList.remove("hidden");
-    setTimeout(() => modalInput.focus(), 50);
 
     // Remove old listeners by cloning
-    const newSubmit = modalSubmit.cloneNode(true);
-    modalSubmit.parentNode.replaceChild(newSubmit, modalSubmit);
-    const newSkip = modalSkip.cloneNode(true);
-    modalSkip.parentNode.replaceChild(newSkip, modalSkip);
-    const newInput = modalInput.cloneNode(true);
-    modalInput.parentNode.replaceChild(newInput, modalInput);
+    const newSubmit = curSubmit.cloneNode(true);
+    curSubmit.parentNode.replaceChild(newSubmit, curSubmit);
+    const newSkip = curSkip.cloneNode(true);
+    curSkip.parentNode.replaceChild(newSkip, curSkip);
+    const newInput = curInput.cloneNode(true);
+    curInput.parentNode.replaceChild(newInput, curInput);
 
     // Re-grab references after clone
     const submitBtn = document.getElementById("modal-2fa-submit");
     const skipBtn = document.getElementById("modal-2fa-skip");
     const inputEl = document.getElementById("modal-2fa-input");
     const errorEl = document.getElementById("modal-2fa-error");
+
+    setTimeout(() => inputEl.focus(), 50);
 
     async function handleSubmit() {
       const code = inputEl.value.trim();
@@ -516,6 +610,8 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         errorEl.textContent = err.message || "Verification failed";
         errorEl.classList.remove("hidden");
+      } finally {
+        // Always reset button state so modal never gets stuck
         submitBtn.disabled = false;
         inputEl.disabled = false;
         submitBtn.textContent = "Verify";
@@ -593,7 +689,77 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // For manual price update — show modal instead of inline
+  // Promise-based 2FA prompt — resolves true on success, false on skip
+  function prompt2FA(challengeData, price) {
+    return new Promise((resolve) => {
+      openModal({
+        itemName: "2FA Required",
+        desc: `Listing at R$ ${formatPrice(price)}`,
+        count: "",
+        onSubmit: async (code) => {
+          const response = await chrome.runtime.sendMessage({
+            type: "VERIFY_2FA",
+            challengeId: challengeData.challengeId,
+            challengeMetadata: challengeData.challengeMetadata,
+            code,
+            userId: currentUserId,
+            retryInfo: challengeData.retryInfo,
+          });
+          if (!response) throw new Error("No response — try again");
+          if (response.error) throw new Error(response.error);
+          closeModal();
+          resolve(true);
+        },
+        onSkip: () => {
+          closeModal();
+          resolve(false);
+        },
+      });
+    });
+  }
+
+  // List multiple copies with automatic continuation after each 2FA
+  async function listMultipleCopies(item, instances, price, statusEl) {
+    let totalListed = 0;
+    let remaining = [...instances];
+
+    while (remaining.length > 0) {
+      statusEl.textContent = totalListed > 0
+        ? `Listed ${totalListed}/${instances.length}, continuing...`
+        : `Listing ${instances.length} copies...`;
+      statusEl.className = "price-status";
+      statusEl.classList.remove("hidden");
+
+      const response = await chrome.runtime.sendMessage({
+        type: "UPDATE_MULTI_PRICE",
+        collectibleItemId: item.collectibleItemId,
+        instances: remaining,
+        price,
+        userId: currentUserId,
+      });
+
+      if (!response) throw new Error("No response from background");
+      if (response.error) throw new Error(response.error);
+
+      totalListed += response.listed;
+
+      if (response.twoFA) {
+        statusEl.textContent = `Listed ${totalListed}/${instances.length} — 2FA required`;
+
+        const continued = await prompt2FA(response.challengeData, price);
+        if (!continued) break; // user skipped
+
+        totalListed++; // the 2FA copy is now listed
+        remaining = remaining.slice(response.listed + 1); // skip listed + 2FA'd one
+      } else {
+        break; // all remaining listed successfully
+      }
+    }
+
+    return totalListed;
+  }
+
+  // For single-copy manual price update — show 2FA modal inline
   function show2FAModal(challengeData, price, statusEl, btnEl, cardEl) {
     statusEl.textContent = "2FA required...";
     statusEl.className = "price-status";
@@ -613,14 +779,12 @@ document.addEventListener("DOMContentLoaded", () => {
           retryInfo: challengeData.retryInfo,
         });
 
-        if (response.error) {
-          throw new Error(response.error);
-        }
+        if (!response) throw new Error("No response — try again");
+        if (response.error) throw new Error(response.error);
 
         closeModal();
         showToast("Listed Successfully!");
 
-        // Update the card UI
         statusEl.textContent = "";
         statusEl.classList.add("hidden");
 

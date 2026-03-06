@@ -337,6 +337,7 @@ async function getAutoListSettings() {
     undercutAmount: 1,    // R$ to undercut by
     priceFloors: {},      // { assetId: minPrice }
     listCounts: {},       // { assetId: count } — how many copies to list
+    protectedSellers: [], // [{ id, username, avatarUrl }] — alt accounts to not undercut
   };
   if (!data.autoListSettings) return defaults;
   // Merge stored settings with defaults so new fields are always present
@@ -383,14 +384,33 @@ async function runAutoListCycle() {
       const listCount = settings.listCounts[detail.id] || 1;
 
       try {
-        // Get the current best price on the market
-        const bestSeller = await getLowestReseller(detail.collectibleItemId);
-        if (!bestSeller || !bestSeller.price) {
+        // Get the lowest reseller on the market
+        const resellers = await getResellers(detail.collectibleItemId, 1);
+        if (resellers.length === 0) {
           log.push({ item: detail.name, msg: "No resellers found, skipping", time: Date.now() });
           continue;
         }
 
-        // Calculate undercut price
+        const bestSeller = resellers[0];
+
+        // If we're already the cheapest — skip
+        if (bestSeller.sellerId === userId) {
+          log.push({ item: detail.name, msg: `Already best seller at R$ ${bestSeller.price}, skipping`, time: Date.now() });
+          continue;
+        }
+
+        // If a protected alt is the cheapest — skip (don't undercut them)
+        // Match by ID or by username as fallback
+        const isProtected = settings.protectedSellers.length > 0 && settings.protectedSellers.some((s) =>
+          (s.id && bestSeller.sellerId && s.id === bestSeller.sellerId) ||
+          (s.username && bestSeller.sellerName && s.username.toLowerCase() === bestSeller.sellerName.toLowerCase())
+        );
+        if (isProtected) {
+          log.push({ item: detail.name, msg: `Protected alt (${bestSeller.sellerName}) is lowest at R$ ${bestSeller.price}, skipping`, time: Date.now() });
+          continue;
+        }
+
+        // Undercut the cheapest price
         let targetPrice = bestSeller.price - settings.undercutAmount;
         if (targetPrice < 1) targetPrice = 1;
 
@@ -418,12 +438,6 @@ async function runAutoListCycle() {
 
           // Skip if this copy is already listed at the target price
           if (inst.saleState === "OnSale" && inst.price === targetPrice) {
-            skippedCount++;
-            continue;
-          }
-
-          // Also skip if we're already the best seller and only listing 1 copy
-          if (c === 0 && copiesToList === 1 && bestSeller.sellerId === userId && bestSeller.price <= targetPrice) {
             skippedCount++;
             continue;
           }
@@ -531,21 +545,22 @@ function stopAutoList() {
 
 // --- Reseller Lookup ---
 
-async function getLowestReseller(collectibleItemId) {
-  const url = `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}/resellers?limit=1&sortOrder=Asc`;
+async function getResellers(collectibleItemId, limit = 10) {
+  const url = `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}/resellers?limit=${limit}&sortOrder=Asc`;
   const response = await robloxFetch(url);
-  if (!response.ok) return null;
+  if (!response.ok) return [];
 
   const data = await response.json();
-  if (!data.data || data.data.length === 0) return null;
+  if (!data.data || data.data.length === 0) return [];
 
-  const seller = data.data[0];
-  return {
-    price: seller.price,
-    sellerId: seller.seller?.id || null,
-    sellerName: seller.seller?.name || null,
-  };
+  return data.data.map((entry) => ({
+    price: entry.price,
+    sellerId: entry.seller?.sellerId ?? entry.seller?.id ?? null,
+    sellerName: entry.seller?.name ?? null,
+  }));
 }
+
+
 
 // --- Handlers ---
 
@@ -598,6 +613,7 @@ async function handleGetItems(forceRefresh = false) {
       ownedCount: 0,
       userLowestPrice: null,
       isBestPrice: false,
+      isProtectedSeller: false,
       bestSeller: null,
       priceFloor: autoSettings.priceFloors[detail.id] || 0,
       listCount: autoSettings.listCounts[detail.id] || 1,
@@ -606,10 +622,14 @@ async function handleGetItems(forceRefresh = false) {
 
     console.log("[UGC] Item:", detail.name, "| collectibleItemId:", detail.collectibleItemId, "| userId:", userId);
 
-    // Fetch lowest reseller info
+    // Fetch resellers (top 10 lowest)
+    let allResellers = [];
     if (detail.collectibleItemId) {
       try {
-        item.bestSeller = await getLowestReseller(detail.collectibleItemId);
+        allResellers = await getResellers(detail.collectibleItemId);
+        if (allResellers.length > 0) {
+          item.bestSeller = allResellers[0]; // absolute lowest for display
+        }
       } catch (e) {
         console.warn("[UGC] Reseller lookup failed for", detail.name, ":", e.message);
       }
@@ -634,7 +654,9 @@ async function handleGetItems(forceRefresh = false) {
           if (listedInstances.length > 0) {
             const userLowest = Math.min(...listedInstances.map((i) => i.price));
             item.userLowestPrice = userLowest;
-            item.isBestPrice = detail.lowestPrice != null && userLowest <= detail.lowestPrice;
+            // Check if WE are the actual best seller (by user ID, not just price match)
+            item.isBestPrice = item.bestSeller && item.bestSeller.sellerId === userId;
+            item.isProtectedSeller = !item.isBestPrice && item.bestSeller && autoSettings.protectedSellers.some((s) => (s.id && item.bestSeller.sellerId && s.id === item.bestSeller.sellerId) || (s.username && item.bestSeller.sellerName && s.username.toLowerCase() === item.bestSeller.sellerName.toLowerCase()));
           }
 
           // Store all instances for bulk price editing later
@@ -693,14 +715,19 @@ async function handleAddItem(assetId) {
     ownedCount: 0,
     userLowestPrice: null,
     isBestPrice: false,
+    isProtectedSeller: false,
     bestSeller: null,
     allInstances: [],
   };
 
-  // Fetch lowest reseller info
+  // Fetch resellers (top 10 lowest)
+  let allResellers = [];
   if (detail.collectibleItemId) {
     try {
-      item.bestSeller = await getLowestReseller(detail.collectibleItemId);
+      allResellers = await getResellers(detail.collectibleItemId);
+      if (allResellers.length > 0) {
+        item.bestSeller = allResellers[0]; // absolute lowest for display
+      }
     } catch (e) {
       // Continue without reseller data
     }
@@ -709,6 +736,7 @@ async function handleAddItem(assetId) {
   // Fetch resale instance data if possible
   try {
     const user = await getAuthenticatedUser();
+    const autoSettings = await getAutoListSettings();
     if (detail.collectibleItemId) {
       const instances = await getResellableInstances(detail.collectibleItemId, user.id);
       item.ownedCount = instances.length;
@@ -724,7 +752,8 @@ async function handleAddItem(assetId) {
         if (listedInstances.length > 0) {
           const userLowest = Math.min(...listedInstances.map((i) => i.price));
           item.userLowestPrice = userLowest;
-          item.isBestPrice = detail.lowestPrice != null && userLowest <= detail.lowestPrice;
+          item.isBestPrice = item.bestSeller && item.bestSeller.sellerId === user.id;
+          item.isProtectedSeller = !item.isBestPrice && item.bestSeller && autoSettings.protectedSellers.some((s) => (s.id && item.bestSeller.sellerId && s.id === item.bestSeller.sellerId) || (s.username && item.bestSeller.sellerName && s.username.toLowerCase() === item.bestSeller.sellerName.toLowerCase()));
         }
 
         item.allInstances = instances.map((i) => ({
@@ -923,6 +952,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       settings.priceFloors[message.assetId] = Number(message.floor) || 0;
       saveAutoListSettings(settings).then(() => sendResponse({ success: true }));
     });
+    return true;
+  }
+
+  if (message.type === "SET_PROTECTED_SELLERS") {
+    getAutoListSettings().then((settings) => {
+      // Store as array of { id, username, avatarUrl } objects
+      settings.protectedSellers = (message.sellers || []).filter((s) => s && s.id > 0);
+      saveAutoListSettings(settings).then(() => {
+        itemCache = { data: null, timestamp: 0 }; // invalidate so (Alt) tags refresh
+        sendResponse({ success: true });
+      });
+    });
+    return true;
+  }
+
+  if (message.type === "LOOKUP_USER") {
+    (async () => {
+      try {
+        const userId = Number(message.userId);
+        if (!userId || userId <= 0) {
+          sendResponse({ error: "Invalid user ID" });
+          return;
+        }
+
+        // Fetch username
+        const userRes = await robloxFetch(`https://users.roblox.com/v1/users/${userId}`);
+        if (!userRes.ok) {
+          sendResponse({ error: "User not found" });
+          return;
+        }
+        const userData = await userRes.json();
+
+        // Fetch avatar headshot
+        let avatarUrl = null;
+        try {
+          const avatarRes = await robloxFetch(
+            `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=48x48&format=Png&isCircular=false`
+          );
+          if (avatarRes.ok) {
+            const avatarData = await avatarRes.json();
+            if (avatarData.data && avatarData.data.length > 0 && avatarData.data[0].state === "Completed") {
+              avatarUrl = avatarData.data[0].imageUrl;
+            }
+          }
+        } catch (e) {
+          // Continue without avatar
+        }
+
+        sendResponse({
+          success: true,
+          id: userId,
+          username: userData.name,
+          avatarUrl,
+        });
+      } catch (err) {
+        sendResponse({ error: err.message || "Lookup failed" });
+      }
+    })();
     return true;
   }
 });
