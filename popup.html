@@ -13,59 +13,93 @@
       <button id="refresh-btn" class="refresh-btn" title="Refresh prices">&#x21bb;</button>
     </div>
 
-    <div class="add-item">
-      <input type="text" id="asset-input" placeholder="Asset ID or catalog URL" spellcheck="false">
-      <button id="add-btn">Add</button>
+    <!-- Tab Bar -->
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tab-sell">Sell</button>
+      <button class="tab-btn" id="tab-watch">Watch</button>
     </div>
 
-    <div id="add-error" class="add-error hidden"></div>
-
-    <!-- Auto-List Panel -->
-    <div class="autolist-panel" id="autolist-panel">
-      <div class="autolist-header" id="autolist-toggle">
-        <span class="autolist-title">Auto-List</span>
-        <span class="autolist-badge hidden" id="autolist-badge">ON</span>
-        <span class="autolist-arrow" id="autolist-arrow">&#9660;</span>
+    <!-- ===== Sell Tab ===== -->
+    <div id="sell-content">
+      <div class="add-item">
+        <input type="text" id="asset-input" placeholder="Asset ID or catalog URL" spellcheck="false">
+        <button id="add-btn">Add</button>
       </div>
-      <div class="autolist-body hidden" id="autolist-body">
-        <div class="autolist-row">
-          <label>Interval (min):</label>
-          <input type="number" id="autolist-interval" min="3" max="60" value="5" class="autolist-input">
+
+      <div id="add-error" class="add-error hidden"></div>
+
+      <!-- Auto-List Panel -->
+      <div class="autolist-panel" id="autolist-panel">
+        <div class="autolist-header" id="autolist-toggle">
+          <span class="autolist-title">Auto-List</span>
+          <span class="autolist-badge hidden" id="autolist-badge">ON</span>
+          <span class="autolist-arrow" id="autolist-arrow">&#9660;</span>
         </div>
-        <div class="autolist-row">
-          <label>Undercut by R$:</label>
-          <input type="number" id="autolist-undercut" min="1" max="10000" value="1" class="autolist-input">
-        </div>
-        <div class="autolist-protected-section">
+        <div class="autolist-body hidden" id="autolist-body">
           <div class="autolist-row">
-            <label>Protected:</label>
-            <input type="text" id="autolist-protected-input" placeholder="User ID" class="autolist-input autolist-protected-id-input" inputmode="numeric">
-            <button id="autolist-protected-add" class="autolist-protected-add-btn">Add</button>
+            <label>Interval (min):</label>
+            <input type="number" id="autolist-interval" min="3" max="60" value="5" class="autolist-input">
           </div>
-          <div id="autolist-protected-list" class="autolist-protected-list"></div>
+          <div class="autolist-row">
+            <label>Undercut by R$:</label>
+            <input type="number" id="autolist-undercut" min="1" max="10000" value="1" class="autolist-input">
+          </div>
+          <div class="autolist-protected-section">
+            <div class="autolist-row">
+              <label>Protected:</label>
+              <input type="text" id="autolist-protected-input" placeholder="User ID" class="autolist-input autolist-protected-id-input" inputmode="numeric">
+              <button id="autolist-protected-add" class="autolist-protected-add-btn">Add</button>
+            </div>
+            <div id="autolist-protected-list" class="autolist-protected-list"></div>
+          </div>
+          <div class="autolist-actions">
+            <button id="autolist-start" class="autolist-start-btn">Start</button>
+            <button id="autolist-stop" class="autolist-stop-btn hidden">Stop</button>
+          </div>
+          <div class="autolist-status hidden" id="autolist-status"></div>
+          <div class="autolist-log hidden" id="autolist-log"></div>
         </div>
-        <div class="autolist-actions">
-          <button id="autolist-start" class="autolist-start-btn">Start</button>
-          <button id="autolist-stop" class="autolist-stop-btn hidden">Stop</button>
-        </div>
-        <div class="autolist-status hidden" id="autolist-status"></div>
-        <div class="autolist-log hidden" id="autolist-log"></div>
+      </div>
+
+      <div id="loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p>Loading items...</p>
+      </div>
+
+      <div id="error" class="error hidden">
+        <p id="error-message"></p>
+      </div>
+
+      <div id="item-list" class="item-list hidden"></div>
+
+      <div id="empty" class="empty">
+        <p>No items yet. Add a UGC limited by asset ID or catalog URL above.</p>
       </div>
     </div>
 
-    <div id="loading" class="loading hidden">
-      <div class="spinner"></div>
-      <p>Loading items...</p>
-    </div>
+    <!-- ===== Watch Tab ===== -->
+    <div id="watch-content" class="hidden">
+      <div class="add-item">
+        <input type="text" id="watch-asset-input" placeholder="Asset ID or catalog URL" spellcheck="false">
+        <button id="watch-add-btn">Add</button>
+      </div>
 
-    <div id="error" class="error hidden">
-      <p id="error-message"></p>
-    </div>
+      <div id="watch-add-error" class="add-error hidden"></div>
 
-    <div id="item-list" class="item-list hidden"></div>
+      <div id="watch-loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p>Loading items...</p>
+      </div>
 
-    <div id="empty" class="empty">
-      <p>No items yet. Add a UGC limited by asset ID or catalog URL above.</p>
+      <div id="watch-error" class="error hidden">
+        <p id="watch-error-message"></p>
+      </div>
+
+      <div id="watch-item-list" class="item-list hidden"></div>
+
+      <div id="watch-empty" class="empty">
+        <p>No items being watched. Add a UGC limited to track its stock.</p>
+      </div>
     </div>
   </div>
 

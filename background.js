@@ -102,6 +102,16 @@ async function saveWatchlist(watchlist) {
   await chrome.storage.local.set({ watchlist });
 }
 
+// Watch Tracker (separate from sell watchlist)
+async function getWatchTracker() {
+  const data = await chrome.storage.local.get("watchTracker");
+  return data.watchTracker || [];
+}
+
+async function saveWatchTracker(list) {
+  await chrome.storage.local.set({ watchTracker: list });
+}
+
 // --- Roblox API Functions ---
 
 async function getCatalogDetails(assetIds) {
@@ -1013,6 +1023,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: true });
       });
     });
+    return true;
+  }
+
+  // --- Watch Tracker handlers ---
+
+  if (message.type === "GET_WATCH_ITEMS") {
+    (async () => {
+      try {
+        const ids = await getWatchTracker();
+        if (ids.length === 0) return sendResponse({ items: [] });
+
+        const details = await getCatalogDetails(ids);
+        const items = details.map((d) => ({
+          assetId: d.id,
+          name: d.name,
+          price: d.price || null,
+          lowestPrice: d.lowestPrice || null,
+          quantityLeft: d.unitsAvailableForConsumption ?? null,
+          totalQuantity: d.totalQuantity ?? null,
+        }));
+        sendResponse({ items });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "ADD_WATCH_ITEM") {
+    (async () => {
+      try {
+        const id = Number(message.assetId);
+        if (!id) return sendResponse({ error: "Invalid asset ID" });
+
+        const tracker = await getWatchTracker();
+        if (tracker.includes(id)) return sendResponse({ error: "Already in watch list" });
+
+        const details = await getCatalogDetails([id]);
+        if (!details || details.length === 0) return sendResponse({ error: "Item not found" });
+
+        tracker.push(id);
+        await saveWatchTracker(tracker);
+
+        const d = details[0];
+        sendResponse({
+          item: {
+            assetId: d.id,
+            name: d.name,
+            price: d.price || null,
+            lowestPrice: d.lowestPrice || null,
+            quantityLeft: d.unitsAvailableForConsumption ?? null,
+            totalQuantity: d.totalQuantity ?? null,
+          },
+        });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "REMOVE_WATCH_ITEM") {
+    (async () => {
+      const tracker = await getWatchTracker();
+      await saveWatchTracker(tracker.filter((id) => id !== Number(message.assetId)));
+      sendResponse({ success: true });
+    })();
     return true;
   }
 

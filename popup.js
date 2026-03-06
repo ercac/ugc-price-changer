@@ -9,6 +9,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const addBtn = document.getElementById("add-btn");
   const refreshBtn = document.getElementById("refresh-btn");
 
+  // --- Tab Bar ---
+  const tabSellBtn = document.getElementById("tab-sell");
+  const tabWatchBtn = document.getElementById("tab-watch");
+  const sellContent = document.getElementById("sell-content");
+  const watchContent = document.getElementById("watch-content");
+
+  // --- Watch Tab DOM Refs ---
+  const watchAssetInput = document.getElementById("watch-asset-input");
+  const watchAddBtn = document.getElementById("watch-add-btn");
+  const watchAddErrorEl = document.getElementById("watch-add-error");
+  const watchLoadingEl = document.getElementById("watch-loading");
+  const watchErrorEl = document.getElementById("watch-error");
+  const watchErrorMessageEl = document.getElementById("watch-error-message");
+  const watchItemListEl = document.getElementById("watch-item-list");
+  const watchEmptyEl = document.getElementById("watch-empty");
+
+  let activeTab = "sell";
+
   let currentUserId = null;
 
   // --- Auto-List Panel ---
@@ -1013,7 +1031,235 @@ document.addEventListener("DOMContentLoaded", () => {
   assetInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addItem();
   });
-  refreshBtn.addEventListener("click", () => loadItems(true));
+
+  // --- Tab Switching ---
+  tabSellBtn.addEventListener("click", () => {
+    if (activeTab === "sell") return;
+    activeTab = "sell";
+    tabSellBtn.classList.add("active");
+    tabWatchBtn.classList.remove("active");
+    sellContent.classList.remove("hidden");
+    watchContent.classList.add("hidden");
+  });
+
+  tabWatchBtn.addEventListener("click", () => {
+    if (activeTab === "watch") return;
+    activeTab = "watch";
+    tabWatchBtn.classList.add("active");
+    tabSellBtn.classList.remove("active");
+    watchContent.classList.remove("hidden");
+    sellContent.classList.add("hidden");
+    loadWatchItems();
+  });
+
+  // Refresh button: refresh whichever tab is active
+  refreshBtn.addEventListener("click", () => {
+    if (activeTab === "sell") {
+      loadItems(true);
+    } else {
+      loadWatchItems(true);
+    }
+  });
+
+  // --- Watch Tab Functions ---
+
+  function showWatchState(state) {
+    watchLoadingEl.classList.toggle("hidden", state !== "loading");
+    watchErrorEl.classList.toggle("hidden", state !== "error");
+    watchItemListEl.classList.toggle("hidden", state !== "items");
+    watchEmptyEl.classList.toggle("hidden", state !== "empty");
+  }
+
+  function showWatchAddError(msg) {
+    watchAddErrorEl.textContent = msg;
+    watchAddErrorEl.classList.remove("hidden");
+    setTimeout(() => watchAddErrorEl.classList.add("hidden"), 4000);
+  }
+
+  function createWatchCard(item) {
+    const card = document.createElement("div");
+    card.className = "watch-card";
+    card.dataset.assetId = item.assetId;
+
+    // Name link
+    const info = document.createElement("div");
+    info.className = "watch-info";
+
+    const nameLink = document.createElement("a");
+    nameLink.className = "watch-name";
+    nameLink.href = `https://www.roblox.com/catalog/${item.assetId}`;
+    nameLink.target = "_blank";
+    nameLink.title = item.name;
+    nameLink.textContent = item.name;
+    info.appendChild(nameLink);
+
+    // Details row: quantity + price
+    const details = document.createElement("div");
+    details.className = "watch-details";
+
+    const qty = document.createElement("span");
+    qty.className = "watch-qty";
+    if (item.quantityLeft != null && item.totalQuantity != null) {
+      if (item.quantityLeft === 0) {
+        qty.textContent = "Sold out";
+        qty.classList.add("sold-out");
+      } else {
+        qty.textContent = `${item.quantityLeft.toLocaleString()} / ${item.totalQuantity.toLocaleString()} left`;
+      }
+    } else {
+      qty.textContent = "Qty unknown";
+      qty.style.color = "#666";
+    }
+    details.appendChild(qty);
+
+    const price = document.createElement("span");
+    price.className = "watch-price";
+    if (item.lowestPrice) {
+      price.textContent = `R$ ${item.lowestPrice.toLocaleString()}`;
+    } else if (item.price) {
+      price.textContent = `R$ ${item.price.toLocaleString()}`;
+    }
+    details.appendChild(price);
+
+    info.appendChild(details);
+    card.appendChild(info);
+
+    // Remove button
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "watch-remove";
+    removeBtn.title = "Remove item";
+    removeBtn.innerHTML = "&times;";
+    removeBtn.addEventListener("click", async () => {
+      const confirmed = await showConfirm(`Are you sure you want to remove ${item.name} from the watch list?`);
+      if (confirmed) removeWatchItem(item.assetId, card);
+    });
+    card.appendChild(removeBtn);
+
+    return card;
+  }
+
+  function renderWatchItems(items) {
+    if (items.length === 0) {
+      showWatchState("empty");
+      return;
+    }
+
+    showWatchState("items");
+    watchItemListEl.innerHTML = "";
+
+    const countEl = document.createElement("div");
+    countEl.className = "item-count";
+    countEl.textContent = `${items.length} item${items.length !== 1 ? "s" : ""}`;
+    watchItemListEl.appendChild(countEl);
+
+    for (const item of items) {
+      watchItemListEl.appendChild(createWatchCard(item));
+    }
+  }
+
+  async function loadWatchItems(forceRefresh = false) {
+    showWatchState("loading");
+
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "GET_WATCH_ITEMS" });
+
+      if (response.error) {
+        showWatchState("error");
+        watchErrorMessageEl.textContent = response.error;
+        return;
+      }
+
+      renderWatchItems(response.items);
+    } catch (err) {
+      showWatchState("error");
+      watchErrorMessageEl.textContent = `Error: ${err.message}`;
+    }
+  }
+
+  async function addWatchItem() {
+    const raw = watchAssetInput.value;
+    const assetId = parseAssetId(raw);
+
+    if (!assetId) {
+      showWatchAddError("Enter a valid asset ID or Roblox catalog URL.");
+      return;
+    }
+
+    watchAddBtn.disabled = true;
+    watchAddErrorEl.classList.add("hidden");
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "ADD_WATCH_ITEM",
+        assetId,
+      });
+
+      watchAddBtn.disabled = false;
+
+      if (response.error) {
+        showWatchAddError(response.error);
+        return;
+      }
+
+      watchAssetInput.value = "";
+
+      if (!watchEmptyEl.classList.contains("hidden")) {
+        showWatchState("items");
+        watchItemListEl.innerHTML = "";
+        const countEl = document.createElement("div");
+        countEl.className = "item-count";
+        countEl.textContent = "1 item";
+        watchItemListEl.appendChild(countEl);
+      }
+
+      const countEl = watchItemListEl.querySelector(".item-count");
+      const cards = watchItemListEl.querySelectorAll(".watch-card");
+      if (countEl) {
+        const newCount = cards.length + 1;
+        countEl.textContent = `${newCount} item${newCount !== 1 ? "s" : ""}`;
+      }
+
+      watchItemListEl.appendChild(createWatchCard(response.item));
+    } catch (err) {
+      watchAddBtn.disabled = false;
+      showWatchAddError(`Error: ${err.message}`);
+    }
+  }
+
+  async function removeWatchItem(assetId, cardEl) {
+    cardEl.style.opacity = "0.5";
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "REMOVE_WATCH_ITEM",
+        assetId,
+      });
+
+      if (response.error) {
+        cardEl.style.opacity = "1";
+        return;
+      }
+
+      cardEl.remove();
+
+      const remaining = watchItemListEl.querySelectorAll(".watch-card");
+      if (remaining.length === 0) {
+        showWatchState("empty");
+      } else {
+        const countEl = watchItemListEl.querySelector(".item-count");
+        if (countEl) {
+          countEl.textContent = `${remaining.length} item${remaining.length !== 1 ? "s" : ""}`;
+        }
+      }
+    } catch (err) {
+      cardEl.style.opacity = "1";
+    }
+  }
+
+  watchAddBtn.addEventListener("click", addWatchItem);
+  watchAssetInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addWatchItem();
+  });
 
   loadItems();
   checkPending2FA();
