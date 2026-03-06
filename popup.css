@@ -898,6 +898,82 @@ body {
   color: #666;
 }
 
+/* Confirm Dialog */
+.confirm-box {
+  width: 260px;
+  text-align: center;
+}
+
+.confirm-msg {
+  font-size: 13px;
+  color: #e0e0e0;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.confirm-yes-btn {
+  padding: 6px 20px;
+  border: none;
+  border-radius: 4px;
+  background-color: #e74c3c;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.confirm-yes-btn:hover {
+  background-color: #c0392b;
+}
+
+.confirm-no-btn {
+  padding: 6px 20px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: transparent;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.confirm-no-btn:hover {
+  border-color: #666;
+  color: #fff;
+}
+
+/* Delist All button */
+.delist-all-btn {
+  padding: 3px 8px;
+  border: 1px solid #e74c3c;
+  border-radius: 4px;
+  background-color: transparent;
+  color: #e74c3c;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.delist-all-btn:hover {
+  background-color: #e74c3c;
+  color: #fff;
+}
+
+.delist-all-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* Success Toast */
 .success-toast {
   position: fixed;

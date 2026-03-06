@@ -316,8 +316,15 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
     }
 
+    // Check if any copies are currently listed
+    const listedInstances = (item.allInstances || []).filter((i) => i.saleState === "OnSale");
+    const hasListedCopies = listedInstances.length > 0 || activeInstance.saleState === "OnSale";
+
     let priceEditHtml = "";
     if (canSell) {
+      const delistBtnHtml = hasListedCopies
+        ? `<button class="delist-all-btn">Delist All</button>`
+        : "";
       priceEditHtml = `
         <div class="item-price-row">
           <input type="number" class="price-input" min="1" placeholder="${activeInstance.resalePrice || "Price"}" value="${activeInstance.resalePrice || ""}">
@@ -325,6 +332,7 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
         ${listCountHtml}
         ${floorHtml}
+        ${delistBtnHtml}
         <div class="price-status hidden"></div>
       `;
     }
@@ -348,9 +356,63 @@ document.addEventListener("DOMContentLoaded", () => {
       <button class="item-remove" title="Remove item">&times;</button>
     `;
 
-    card.querySelector(".item-remove").addEventListener("click", () => {
-      removeItem(item.assetId, card);
+    card.querySelector(".item-remove").addEventListener("click", async () => {
+      const confirmed = await showConfirm(`Are you sure you want to remove ${item.name} from this list?`);
+      if (confirmed) removeItem(item.assetId, card);
     });
+
+    // Delist All button handler
+    const delistBtn = card.querySelector(".delist-all-btn");
+    if (delistBtn) {
+      delistBtn.addEventListener("click", async () => {
+        const confirmed = await showConfirm(`Are you sure you want to delist all of ${item.name}?`);
+        if (!confirmed) return;
+
+        delistBtn.disabled = true;
+        delistBtn.textContent = "Delisting...";
+        const statusEl = card.querySelector(".price-status");
+
+        try {
+          const instances = item.allInstances && item.allInstances.length > 0
+            ? item.allInstances
+            : [activeInstance];
+
+          const response = await chrome.runtime.sendMessage({
+            type: "DELIST_ALL",
+            collectibleItemId: item.collectibleItemId,
+            instances,
+            userId: currentUserId,
+          });
+
+          if (response.delisted > 0) {
+            showToast(`Delisted ${response.delisted} cop${response.delisted !== 1 ? "ies" : "y"} of ${item.name}`);
+            // Update sale state display
+            const saleStateEl = card.querySelector(".item-sale-state");
+            if (saleStateEl) {
+              saleStateEl.textContent = "Not listed";
+              saleStateEl.className = "item-sale-state";
+            }
+            delistBtn.remove(); // hide button since nothing is listed anymore
+          } else {
+            if (statusEl) {
+              statusEl.textContent = "Nothing to delist";
+              statusEl.className = "price-status error";
+              statusEl.classList.remove("hidden");
+            }
+            delistBtn.disabled = false;
+            delistBtn.textContent = "Delist All";
+          }
+        } catch (err) {
+          if (statusEl) {
+            statusEl.textContent = err.message;
+            statusEl.className = "price-status error";
+            statusEl.classList.remove("hidden");
+          }
+          delistBtn.disabled = false;
+          delistBtn.textContent = "Delist All";
+        }
+      });
+    }
 
     // Serial number dropdown change handler
     if (hasMultiple) {
@@ -539,6 +601,36 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     btnEl.disabled = false;
+  }
+
+  // --- Confirm Dialog ---
+  const confirmModal = document.getElementById("confirm-modal");
+  const confirmMsg = document.getElementById("confirm-msg");
+  const confirmYes = document.getElementById("confirm-yes");
+  const confirmNo = document.getElementById("confirm-no");
+
+  function showConfirm(message) {
+    return new Promise((resolve) => {
+      confirmMsg.textContent = message;
+      confirmModal.classList.remove("hidden");
+
+      const newYes = confirmYes.cloneNode(true);
+      confirmYes.parentNode.replaceChild(newYes, confirmYes);
+      const newNo = confirmNo.cloneNode(true);
+      confirmNo.parentNode.replaceChild(newNo, confirmNo);
+
+      const yesBtn = document.getElementById("confirm-yes");
+      const noBtn = document.getElementById("confirm-no");
+
+      yesBtn.addEventListener("click", () => {
+        confirmModal.classList.add("hidden");
+        resolve(true);
+      });
+      noBtn.addEventListener("click", () => {
+        confirmModal.classList.add("hidden");
+        resolve(false);
+      });
+    });
   }
 
   // --- Global 2FA Modal & Success Toast ---

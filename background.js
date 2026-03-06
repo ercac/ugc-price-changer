@@ -222,6 +222,24 @@ async function updateResalePrice(collectibleItemId, instanceId, productId, price
   return { success: true };
 }
 
+async function delistInstance(collectibleItemId, instanceId, productId, userId) {
+  const url = `https://apis.roblox.com/marketplace-sales/v1/item/${collectibleItemId}/instance/${instanceId}/resale`;
+  const body = JSON.stringify({
+    collectibleProductId: productId,
+    isOnSale: false,
+    price: 0,
+    sellerId: String(userId),
+    sellerType: "User",
+  });
+
+  const response = await robloxFetch(url, { method: "PATCH", body });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Failed to delist (${response.status}): ${text}`);
+  }
+  return { success: true };
+}
+
 async function verify2FAAndRetry(challengeId, challengeMetadata, twoFACode, userId, retryInfo) {
   // Step 1: Verify the 2FA code
   const verifyUrl = `https://twostepverification.roblox.com/v1/users/${userId}/challenges/authenticator/verify`;
@@ -803,6 +821,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleRemoveItem(message.assetId)
       .then(sendResponse)
       .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "DELIST_ALL") {
+    const { collectibleItemId, instances, userId } = message;
+    (async () => {
+      let delisted = 0;
+      const errors = [];
+      const toProcess = instances.filter((inst) => inst.saleState === "OnSale");
+
+      for (let i = 0; i < toProcess.length; i++) {
+        const inst = toProcess[i];
+        try {
+          await delistInstance(collectibleItemId, inst.collectibleInstanceId, inst.collectibleProductId, userId);
+          delisted++;
+        } catch (err) {
+          errors.push(err.message);
+          // If rate limited, pause longer then continue
+          if (err.message.includes("429")) {
+            await sleep(5000);
+          }
+        }
+        // Throttle: 500ms between calls, extra 2s pause every 10 items
+        if (i < toProcess.length - 1) {
+          await sleep(500);
+          if ((i + 1) % 10 === 0) await sleep(2000);
+        }
+      }
+      itemCache = { data: null, timestamp: 0 };
+      sendResponse({ delisted, errors });
+    })();
     return true;
   }
 
