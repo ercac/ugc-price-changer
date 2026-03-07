@@ -61,6 +61,11 @@
         </div>
       </div>
 
+      <!-- Search Bar -->
+      <div id="sell-search" class="sell-search hidden">
+        <input type="text" id="sell-search-input" placeholder="Search items..." spellcheck="false">
+      </div>
+
       <div id="loading" class="loading hidden">
         <div class="spinner"></div>
         <p>Loading items...</p>
@@ -71,6 +76,13 @@
       </div>
 
       <div id="item-list" class="item-list hidden"></div>
+
+      <!-- Pagination -->
+      <div id="sell-pagination" class="pagination hidden">
+        <button id="sell-prev">&#8249; Prev</button>
+        <span id="sell-page-info">Page 1 of 1</span>
+        <button id="sell-next">Next &#8250;</button>
+      </div>
 
       <div id="empty" class="empty">
         <p>No items yet. Add a UGC limited by asset ID or catalog URL above.</p>

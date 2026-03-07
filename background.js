@@ -3,7 +3,7 @@ let csrfToken = null;
 
 // --- Rate Limiting ---
 
-const RATE_LIMIT_DELAY = 100; // ms between API calls
+const RATE_LIMIT_DELAY = 500; // ms between API calls
 let lastRequestTime = 0;
 
 async function throttle() {
@@ -34,7 +34,7 @@ async function robloxFetch(url, options = {}) {
   const cookie = await getRobloxCookie();
   if (!cookie) throw new Error("NOT_AUTHENTICATED");
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 5;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     await throttle();
@@ -75,7 +75,7 @@ async function robloxFetch(url, options = {}) {
         const retryAfter = response.headers.get("Retry-After");
         const waitMs = retryAfter
           ? Number(retryAfter) * 1000
-          : 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+          : 2000 * Math.pow(2, attempt); // 2s, 4s, 8s, 16s, 32s
         console.log(`[UGC] Rate limited, waiting ${waitMs}ms before retry ${attempt + 1}`);
         await sleep(waitMs);
         continue;
@@ -624,7 +624,14 @@ async function handleGetItems(forceRefresh = false) {
 
   // Fetch resellable instances for items that have a collectibleItemId
   const items = [];
+  let itemIdx = 0;
   for (const detail of catalogDetails) {
+    // Pause every 5 items to avoid Roblox rate limits
+    if (itemIdx > 0 && itemIdx % 5 === 0) {
+      console.log(`[UGC] Processed ${itemIdx}/${catalogDetails.length} items, pausing 3s...`);
+      await sleep(3000);
+    }
+    itemIdx++;
     const item = {
       assetId: detail.id,
       name: detail.name,

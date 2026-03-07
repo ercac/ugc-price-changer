@@ -27,6 +27,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let activeTab = "sell";
 
+  // --- Sell Search & Pagination ---
+  const sellSearchEl = document.getElementById("sell-search");
+  const sellSearchInput = document.getElementById("sell-search-input");
+  const sellPaginationEl = document.getElementById("sell-pagination");
+  const sellPrevBtn = document.getElementById("sell-prev");
+  const sellNextBtn = document.getElementById("sell-next");
+  const sellPageInfo = document.getElementById("sell-page-info");
+
+  let allSellItems = [];
+  let sellSearchQuery = "";
+  let sellPage = 1;
+  const SELL_PAGE_SIZE = 10;
+
   let currentUserId = null;
 
   // --- Auto-List Panel ---
@@ -227,7 +240,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function parseAssetId(input) {
     const trimmed = input.trim();
     if (/^\d+$/.test(trimmed)) return Number(trimmed);
-    const urlMatch = trimmed.match(/roblox\.com\/catalog\/(\d+)/i);
+    // Match various Roblox URL formats: /catalog/ID, /marketplace/asset/ID, /bundles/ID, or generic /ID pattern
+    const urlMatch = trimmed.match(/roblox\.com\/(?:catalog|marketplace\/asset|bundles)\/(\d+)/i);
     if (urlMatch) return Number(urlMatch[1]);
     return null;
   }
@@ -915,22 +929,66 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  function renderItems(items) {
-    if (items.length === 0) {
+  function renderSellPage() {
+    if (allSellItems.length === 0) {
       showState("empty");
+      sellSearchEl.classList.add("hidden");
+      sellPaginationEl.classList.add("hidden");
       return;
     }
+
+    // Show search bar when there are items
+    sellSearchEl.classList.remove("hidden");
+
+    // Filter by search query
+    const query = sellSearchQuery.toLowerCase();
+    const filtered = query
+      ? allSellItems.filter((item) => item.name.toLowerCase().includes(query))
+      : allSellItems;
+
+    if (filtered.length === 0) {
+      showState("items");
+      itemListEl.innerHTML = "";
+      const countEl = document.createElement("div");
+      countEl.className = "item-count";
+      countEl.textContent = `No results for "${sellSearchQuery}"`;
+      itemListEl.appendChild(countEl);
+      sellPaginationEl.classList.add("hidden");
+      return;
+    }
+
+    // Pagination math
+    const totalPages = Math.ceil(filtered.length / SELL_PAGE_SIZE);
+    if (sellPage > totalPages) sellPage = totalPages;
+    if (sellPage < 1) sellPage = 1;
+    const start = (sellPage - 1) * SELL_PAGE_SIZE;
+    const pageItems = filtered.slice(start, start + SELL_PAGE_SIZE);
 
     showState("items");
     itemListEl.innerHTML = "";
 
+    // Item count
     const countEl = document.createElement("div");
     countEl.className = "item-count";
-    countEl.textContent = `${items.length} item${items.length !== 1 ? "s" : ""}`;
+    if (query) {
+      countEl.textContent = `${filtered.length} result${filtered.length !== 1 ? "s" : ""} of ${allSellItems.length} items`;
+    } else {
+      countEl.textContent = `${allSellItems.length} item${allSellItems.length !== 1 ? "s" : ""}`;
+    }
     itemListEl.appendChild(countEl);
 
-    for (const item of items) {
+    for (const item of pageItems) {
       itemListEl.appendChild(createItemCard(item));
+    }
+
+    // Pagination controls
+    if (totalPages > 1) {
+      sellPaginationEl.classList.remove("hidden");
+      sellPageInfo.textContent = `Page ${sellPage} of ${totalPages}`;
+      sellPrevBtn.disabled = sellPage <= 1;
+      sellNextBtn.disabled = sellPage >= totalPages;
+    } else {
+      sellPaginationEl.classList.add("hidden");
     }
   }
 
@@ -946,17 +1004,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    cardEl.remove();
-
-    const remaining = itemListEl.querySelectorAll(".item-card");
-    if (remaining.length === 0) {
-      showState("empty");
-    } else {
-      const countEl = itemListEl.querySelector(".item-count");
-      if (countEl) {
-        countEl.textContent = `${remaining.length} item${remaining.length !== 1 ? "s" : ""}`;
-      }
-    }
+    allSellItems = allSellItems.filter((item) => item.assetId !== assetId);
+    renderSellPage();
   }
 
   async function addItem() {
@@ -985,27 +1034,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     assetInput.value = "";
 
-    if (!emptyEl.classList.contains("hidden")) {
-      showState("items");
-      itemListEl.innerHTML = "";
-      const countEl = document.createElement("div");
-      countEl.className = "item-count";
-      countEl.textContent = "1 item";
-      itemListEl.appendChild(countEl);
-    }
+    allSellItems.push(response.item);
 
-    const countEl = itemListEl.querySelector(".item-count");
-    const cards = itemListEl.querySelectorAll(".item-card");
-    if (countEl) {
-      const newCount = cards.length + 1;
-      countEl.textContent = `${newCount} item${newCount !== 1 ? "s" : ""}`;
-    }
-
-    itemListEl.appendChild(createItemCard(response.item));
+    // Clear search and go to last page to show the new item
+    sellSearchQuery = "";
+    sellSearchInput.value = "";
+    const totalPages = Math.ceil(allSellItems.length / SELL_PAGE_SIZE);
+    sellPage = totalPages;
+    renderSellPage();
   }
 
   async function loadItems(forceRefresh = false) {
     showState("loading");
+    sellSearchEl.classList.add("hidden");
+    sellPaginationEl.classList.add("hidden");
 
     try {
       const response = await chrome.runtime.sendMessage({ type: "GET_ITEMS", forceRefresh });
@@ -1020,7 +1062,8 @@ document.addEventListener("DOMContentLoaded", () => {
         currentUserId = response.userId;
       }
 
-      renderItems(response.items);
+      allSellItems = response.items;
+      renderSellPage();
     } catch (err) {
       showState("error");
       errorMessageEl.textContent = `Error: ${err.message}`;
@@ -1030,6 +1073,32 @@ document.addEventListener("DOMContentLoaded", () => {
   addBtn.addEventListener("click", addItem);
   assetInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addItem();
+  });
+
+  // --- Search & Pagination Handlers ---
+  sellSearchInput.addEventListener("input", () => {
+    sellSearchQuery = sellSearchInput.value.trim();
+    sellPage = 1;
+    renderSellPage();
+  });
+
+  sellPrevBtn.addEventListener("click", () => {
+    if (sellPage > 1) {
+      sellPage--;
+      renderSellPage();
+    }
+  });
+
+  sellNextBtn.addEventListener("click", () => {
+    const query = sellSearchQuery.toLowerCase();
+    const filtered = query
+      ? allSellItems.filter((item) => item.name.toLowerCase().includes(query))
+      : allSellItems;
+    const totalPages = Math.ceil(filtered.length / SELL_PAGE_SIZE);
+    if (sellPage < totalPages) {
+      sellPage++;
+      renderSellPage();
+    }
   });
 
   // --- Tab Switching ---
@@ -1124,6 +1193,50 @@ document.addEventListener("DOMContentLoaded", () => {
     info.appendChild(details);
     card.appendChild(info);
 
+    // Actions container (Add to Sell + Remove)
+    const actions = document.createElement("div");
+    actions.className = "watch-actions";
+
+    // Add to Sell button
+    const addToSellBtn = document.createElement("button");
+    addToSellBtn.className = "watch-add-sell-btn";
+    addToSellBtn.title = "Add to Sell list";
+    addToSellBtn.textContent = "+Sell";
+    addToSellBtn.addEventListener("click", async () => {
+      addToSellBtn.disabled = true;
+      addToSellBtn.textContent = "...";
+
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "ADD_ITEM",
+          assetId: item.assetId,
+        });
+
+        if (response.error) {
+          // Check if it's already in the sell list
+          if (response.error.toLowerCase().includes("already")) {
+            addToSellBtn.textContent = "Added";
+            addToSellBtn.classList.add("added");
+          } else {
+            addToSellBtn.textContent = "Error";
+            setTimeout(() => {
+              addToSellBtn.textContent = "+Sell";
+              addToSellBtn.disabled = false;
+            }, 2000);
+          }
+          return;
+        }
+
+        showToast(`${item.name} added to Sell list`);
+        addToSellBtn.textContent = "Added";
+        addToSellBtn.classList.add("added");
+      } catch (err) {
+        addToSellBtn.textContent = "+Sell";
+        addToSellBtn.disabled = false;
+      }
+    });
+    actions.appendChild(addToSellBtn);
+
     // Remove button
     const removeBtn = document.createElement("button");
     removeBtn.className = "watch-remove";
@@ -1133,7 +1246,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const confirmed = await showConfirm(`Are you sure you want to remove ${item.name} from the watch list?`);
       if (confirmed) removeWatchItem(item.assetId, card);
     });
-    card.appendChild(removeBtn);
+    actions.appendChild(removeBtn);
+
+    card.appendChild(actions);
 
     return card;
   }

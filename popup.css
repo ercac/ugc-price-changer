@@ -119,6 +119,75 @@ body {
   border-bottom: 1px solid #393b3d;
 }
 
+/* Sell Search Bar */
+.sell-search {
+  padding: 8px 16px;
+  background-color: #1e2022;
+  border-bottom: 1px solid #393b3d;
+  position: sticky;
+  top: 82px;
+  z-index: 8;
+}
+
+.sell-search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #393b3d;
+  border-radius: 6px;
+  background-color: #2a2c2e;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.sell-search input::placeholder {
+  color: #666;
+}
+
+.sell-search input:focus {
+  border-color: #00b06f;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-top: 1px solid #2e3032;
+  background-color: #1e2022;
+}
+
+.pagination button {
+  padding: 4px 12px;
+  border: 1px solid #393b3d;
+  border-radius: 4px;
+  background-color: transparent;
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pagination button:hover:not(:disabled) {
+  border-color: #00b06f;
+  color: #00b06f;
+}
+
+.pagination button:disabled {
+  color: #444;
+  border-color: #2e3032;
+  cursor: not-allowed;
+}
+
+.pagination span {
+  font-size: 11px;
+  color: #888;
+}
+
 /* Loading state */
 .loading {
   display: flex;
@@ -861,6 +930,43 @@ body {
 .watch-price {
   font-size: 11px;
   color: #00b06f;
+}
+
+.watch-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.watch-add-sell-btn {
+  padding: 2px 8px;
+  border: 1px solid #00b06f;
+  border-radius: 4px;
+  background-color: transparent;
+  color: #00b06f;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.watch-add-sell-btn:hover {
+  background-color: #00b06f;
+  color: #fff;
+}
+
+.watch-add-sell-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.watch-add-sell-btn.added {
+  border-color: #393b3d;
+  color: #666;
+  opacity: 0.7;
+  cursor: default;
 }
 
 .watch-remove {
