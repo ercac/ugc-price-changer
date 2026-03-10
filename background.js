@@ -19,6 +19,68 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// --- TOTP (Time-based One-Time Password) ---
+
+function base32Decode(input) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  const clean = input.replace(/[\s=\-]/g, "").toUpperCase();
+  for (const ch of clean) {
+    const val = alphabet.indexOf(ch);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes = new Uint8Array(Math.floor(bits.length / 8));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  }
+  return bytes;
+}
+
+async function generateTOTP(secret, digits = 6, timeStep = 30) {
+  const key = base32Decode(secret);
+  const counter = Math.floor(Date.now() / 1000 / timeStep);
+
+  // 8-byte big-endian counter
+  const counterBuf = new ArrayBuffer(8);
+  const view = new DataView(counterBuf);
+  view.setUint32(4, counter, false);
+
+  // HMAC-SHA1
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", key, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, counterBuf));
+
+  // Dynamic truncation
+  const offset = sig[sig.length - 1] & 0x0f;
+  const code = (
+    ((sig[offset] & 0x7f) << 24) |
+    ((sig[offset + 1] & 0xff) << 16) |
+    ((sig[offset + 2] & 0xff) << 8) |
+    (sig[offset + 3] & 0xff)
+  ) % Math.pow(10, digits);
+
+  return code.toString().padStart(digits, "0");
+}
+
+async function getTOTPSecret() {
+  const uid = await getCurrentUserId();
+  const key = `totpSecret_${uid}`;
+  const data = await chrome.storage.local.get(key);
+  return data[key] || null;
+}
+
+async function saveTOTPSecret(secret) {
+  const uid = await getCurrentUserId();
+  const key = `totpSecret_${uid}`;
+  if (secret) {
+    await chrome.storage.local.set({ [key]: secret.replace(/\s/g, "").toUpperCase() });
+  } else {
+    await chrome.storage.local.remove(key);
+  }
+}
+
 // --- Cookie & Auth ---
 
 async function getRobloxCookie() {
@@ -88,28 +150,50 @@ async function robloxFetch(url, options = {}) {
 
 // --- Cache ---
 
-const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 let itemCache = { data: null, timestamp: 0 };
 
-// --- Watchlist Storage ---
+// --- User-scoped Storage ---
+// All lists are scoped to the logged-in Roblox user ID so switching accounts
+// gives each account its own sell list, watch list, settings, etc.
+
+let cachedUserId = null;
+
+async function getCurrentUserId() {
+  if (cachedUserId) return cachedUserId;
+  const user = await getAuthenticatedUser();
+  cachedUserId = user.id;
+  return cachedUserId;
+}
+
+function userKey(base) {
+  if (!cachedUserId) throw new Error("User ID not cached — call getCurrentUserId() first");
+  return `${base}_${cachedUserId}`;
+}
 
 async function getWatchlist() {
-  const data = await chrome.storage.local.get("watchlist");
-  return data.watchlist || []; // array of asset ID numbers
+  const uid = await getCurrentUserId();
+  const key = `watchlist_${uid}`;
+  const data = await chrome.storage.local.get(key);
+  return data[key] || [];
 }
 
 async function saveWatchlist(watchlist) {
-  await chrome.storage.local.set({ watchlist });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`watchlist_${uid}`]: watchlist });
 }
 
 // Watch Tracker (separate from sell watchlist)
 async function getWatchTracker() {
-  const data = await chrome.storage.local.get("watchTracker");
-  return data.watchTracker || [];
+  const uid = await getCurrentUserId();
+  const key = `watchTracker_${uid}`;
+  const data = await chrome.storage.local.get(key);
+  return data[key] || [];
 }
 
 async function saveWatchTracker(list) {
-  await chrome.storage.local.set({ watchTracker: list });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`watchTracker_${uid}`]: list });
 }
 
 // --- Roblox API Functions ---
@@ -324,14 +408,17 @@ async function verify2FAAndRetry(challengeId, challengeMetadata, twoFACode, user
 // --- Pending 2FA Queue ---
 
 async function getPending2FA() {
-  const data = await chrome.storage.local.get("pending2FA");
-  return data.pending2FA || [];
+  const uid = await getCurrentUserId();
+  const key = `pending2FA_${uid}`;
+  const data = await chrome.storage.local.get(key);
+  return data[key] || [];
 }
 
 async function addPending2FA(entry) {
   const queue = await getPending2FA();
   queue.push(entry);
-  await chrome.storage.local.set({ pending2FA: queue });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`pending2FA_${uid}`]: queue });
   chrome.action.setBadgeText({ text: String(queue.length) });
   chrome.action.setBadgeBackgroundColor({ color: "#e74c3c" });
 }
@@ -339,7 +426,8 @@ async function addPending2FA(entry) {
 async function removePending2FA(index) {
   const queue = await getPending2FA();
   queue.splice(index, 1);
-  await chrome.storage.local.set({ pending2FA: queue });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`pending2FA_${uid}`]: queue });
   if (queue.length === 0) {
     chrome.action.setBadgeText({ text: "" });
   } else {
@@ -348,7 +436,8 @@ async function removePending2FA(index) {
 }
 
 async function clearAllPending2FA() {
-  await chrome.storage.local.set({ pending2FA: [] });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`pending2FA_${uid}`]: [] });
   chrome.action.setBadgeText({ text: "" });
 }
 
@@ -356,9 +445,12 @@ async function clearAllPending2FA() {
 
 let autoListRunning = false;
 let autoListTimerId = null;
+let autoList2FAResolver = null; // resolves when pending 2FA is completed/skipped during a cycle
 
 async function getAutoListSettings() {
-  const data = await chrome.storage.local.get("autoListSettings");
+  const uid = await getCurrentUserId();
+  const key = `autoListSettings_${uid}`;
+  const data = await chrome.storage.local.get(key);
   const defaults = {
     enabled: false,
     intervalMin: 5,       // minutes between cycles
@@ -367,13 +459,13 @@ async function getAutoListSettings() {
     listCounts: {},       // { assetId: count } — how many copies to list
     protectedSellers: [], // [{ id, username, avatarUrl }] — alt accounts to not undercut
   };
-  if (!data.autoListSettings) return defaults;
-  // Merge stored settings with defaults so new fields are always present
-  return { ...defaults, ...data.autoListSettings };
+  if (!data[key]) return defaults;
+  return { ...defaults, ...data[key] };
 }
 
 async function saveAutoListSettings(settings) {
-  await chrome.storage.local.set({ autoListSettings: settings });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`autoListSettings_${uid}`]: settings });
 }
 
 function randomJitter(baseMs) {
@@ -405,8 +497,16 @@ async function runAutoListCycle() {
 
     const catalogDetails = await getCatalogDetails(watchlist);
 
+    let autoIdx = 0;
     for (const detail of catalogDetails) {
       if (!detail.collectibleItemId) continue;
+
+      // Pause every 5 items to avoid Roblox rate limits
+      if (autoIdx > 0 && autoIdx % 5 === 0) {
+        console.log(`[AutoList] Processed ${autoIdx} items, pausing 3s...`);
+        await sleep(3000);
+      }
+      autoIdx++;
 
       const floor = settings.priceFloors[detail.id] || 0;
       const listCount = settings.listCounts[detail.id] || 1;
@@ -479,6 +579,29 @@ async function runAutoListCycle() {
           );
 
           if (result.needsChallenge) {
+            // Try auto-TOTP first
+            const totpSecret = await getTOTPSecret();
+            if (totpSecret) {
+              try {
+                const code = await generateTOTP(totpSecret);
+                console.log(`[AutoList] Auto-2FA for ${detail.name} — submitting...`);
+                await verify2FAAndRetry(
+                  result.challengeId,
+                  result.challengeMetadata,
+                  code,
+                  userId,
+                  result.retryInfo
+                );
+                listedCount++;
+                log.push({ item: detail.name, msg: `Auto-2FA ✓ listed at R$ ${targetPrice}`, time: Date.now(), success: true });
+                await sleep(2000);
+                continue;
+              } catch (e) {
+                console.log(`[AutoList] Auto-2FA failed for ${detail.name}: ${e.message}, falling back to manual`);
+              }
+            }
+
+            // Fallback: queue for manual 2FA and pause cycle
             await addPending2FA({
               itemName: detail.name,
               assetId: detail.id,
@@ -488,10 +611,24 @@ async function runAutoListCycle() {
               retryInfo: result.retryInfo,
               userId,
               time: Date.now(),
-              fromAutoList: true, // tag so we can resume after resolution
+              fromAutoList: true,
             });
-            twoFAHit = true;
-            break; // 2FA blocks all subsequent copies too
+
+            console.log(`[AutoList] Paused — waiting for manual 2FA on ${detail.name}...`);
+            const resolved = await new Promise((resolve) => {
+              autoList2FAResolver = resolve;
+            });
+            autoList2FAResolver = null;
+
+            if (resolved) {
+              listedCount++;
+              log.push({ item: detail.name, msg: `2FA resolved, listed at R$ ${targetPrice}`, time: Date.now(), success: true });
+            } else {
+              log.push({ item: detail.name, msg: `2FA skipped`, time: Date.now() });
+            }
+
+            await sleep(2000);
+            continue;
           }
 
           listedCount++;
@@ -502,10 +639,7 @@ async function runAutoListCycle() {
           }
         }
 
-        if (twoFAHit) {
-          log.push({ item: detail.name, msg: `2FA required — queued (${listedCount} listed before)`, time: Date.now() });
-          break; // Stop processing more items — only one 2FA challenge at a time
-        } else if (listedCount > 0) {
+        if (listedCount > 0) {
           const copyText = listedCount > 1 ? `${listedCount} copies` : "1 copy";
           log.push({ item: detail.name, msg: `${copyText} at R$ ${targetPrice} (undercut R$ ${bestSeller.price})`, time: Date.now(), success: true });
         } else {
@@ -526,7 +660,8 @@ async function runAutoListCycle() {
   console.log("[AutoList] Cycle complete:", log);
 
   // Persist last run log
-  await chrome.storage.local.set({ autoListLog: log, autoListLastRun: Date.now() });
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`autoListLog_${uid}`]: log, [`autoListLastRun_${uid}`]: Date.now() });
 
   // Invalidate item cache so popup shows fresh data
   itemCache = { data: null, timestamp: 0 };
@@ -826,17 +961,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "ADD_ITEM") {
-    itemCache = { data: null, timestamp: 0 }; // invalidate cache
     handleAddItem(message.assetId)
-      .then((item) => sendResponse({ item }))
+      .then((item) => {
+        // Append to cache instead of invalidating — avoids full reload on next refresh
+        if (itemCache.data && itemCache.data.items) {
+          itemCache.data.items.push(item);
+        }
+        sendResponse({ item });
+      })
       .catch((err) => sendResponse({ error: err.message }));
     return true;
   }
 
   if (message.type === "REMOVE_ITEM") {
-    itemCache = { data: null, timestamp: 0 }; // invalidate cache
     handleRemoveItem(message.assetId)
-      .then(sendResponse)
+      .then((resp) => {
+        // Remove from cache instead of invalidating
+        if (itemCache.data && itemCache.data.items) {
+          itemCache.data.items = itemCache.data.items.filter(
+            (i) => i.assetId !== Number(message.assetId)
+          );
+        }
+        sendResponse(resp);
+      })
       .catch((err) => sendResponse({ error: err.message }));
     return true;
   }
@@ -889,16 +1036,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "GET_AUTOLIST_STATE") {
-    getAutoListSettings().then((settings) => {
-      chrome.storage.local.get(["autoListLog", "autoListLastRun"], (data) => {
-        sendResponse({
-          settings,
-          running: autoListRunning,
-          log: data.autoListLog || [],
-          lastRun: data.autoListLastRun || null,
-        });
+    (async () => {
+      const settings = await getAutoListSettings();
+      const uid = await getCurrentUserId();
+      const logKey = `autoListLog_${uid}`;
+      const lastRunKey = `autoListLastRun_${uid}`;
+      const data = await chrome.storage.local.get([logKey, lastRunKey]);
+      sendResponse({
+        settings,
+        running: autoListRunning,
+        log: data[logKey] || [],
+        lastRun: data[lastRunKey] || null,
       });
-    });
+    })();
     return true;
   }
 
@@ -946,19 +1096,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           entry.retryInfo
         );
         await removePending2FA(index);
-        itemCache = { data: null, timestamp: 0 }; // invalidate cache
-        sendResponse({ success: true, itemName: entry.itemName, price: entry.targetPrice });
+        // Update cache inline instead of invalidating (avoids full reload in popup)
+        if (itemCache.data && itemCache.data.items) {
+          const cached = itemCache.data.items.find((i) => i.assetId === entry.assetId);
+          if (cached) {
+            cached.resalePrice = entry.targetPrice;
+            cached.saleState = "OnSale";
+          }
+        }
+        sendResponse({ success: true, itemName: entry.itemName, price: entry.targetPrice, assetId: entry.assetId });
 
-        // If this was from auto-list and auto-list is still running,
-        // schedule a quick follow-up cycle to process remaining items.
-        // Items already listed at target price will be skipped automatically.
-        if (entry.fromAutoList && autoListRunning) {
-          const delayMs = 5000 + Math.random() * 5000; // 5-10s delay
-          console.log(`[AutoList] 2FA resolved for ${entry.itemName}, resuming cycle in ${Math.round(delayMs / 1000)}s`);
-          if (autoListTimerId) clearTimeout(autoListTimerId);
-          autoListTimerId = setTimeout(() => {
-            runAutoListCycle();
-          }, delayMs);
+        // Resume the paused auto-list cycle instead of restarting
+        if (autoList2FAResolver) {
+          console.log(`[AutoList] 2FA resolved for ${entry.itemName}, resuming cycle...`);
+          autoList2FAResolver(true);
         }
       } catch (err) {
         sendResponse({ error: err.message });
@@ -969,7 +1120,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "DISMISS_PENDING_2FA") {
     removePending2FA(message.index)
-      .then(() => sendResponse({ success: true }))
+      .then(() => {
+        // If auto-list is waiting on this 2FA, signal it was skipped
+        if (autoList2FAResolver) {
+          console.log("[AutoList] 2FA skipped, resuming cycle...");
+          autoList2FAResolver(false);
+        }
+        sendResponse({ success: true });
+      })
       .catch((err) => sendResponse({ error: err.message }));
     return true;
   }
@@ -999,7 +1157,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           results.failed++;
         }
       }
-      itemCache = { data: null, timestamp: 0 };
+      // Update cache inline instead of invalidating
+      if (itemCache.data && itemCache.data.items) {
+        const cached = itemCache.data.items.find((i) => i.collectibleItemId === collectibleItemId);
+        if (cached) {
+          cached.resalePrice = price;
+          cached.saleState = "OnSale";
+        }
+      }
       sendResponse(results);
     })();
     return true;
@@ -1030,6 +1195,94 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: true });
       });
     });
+    return true;
+  }
+
+  // --- TOTP handlers ---
+
+  if (message.type === "AUTO_VERIFY_CHALLENGE") {
+    (async () => {
+      const secret = await getTOTPSecret();
+      if (!secret) { sendResponse({ error: "No TOTP secret" }); return; }
+      try {
+        const code = await generateTOTP(secret);
+        await verify2FAAndRetry(
+          message.challengeId, message.challengeMetadata,
+          code, message.userId, message.retryInfo
+        );
+        sendResponse({ success: true });
+      } catch (err) {
+        console.error("[TOTP] Auto-verify failed:", err.message);
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "GET_TOTP_SECRET") {
+    getTOTPSecret()
+      .then((secret) => sendResponse({ exists: !!secret }))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "SET_TOTP_SECRET") {
+    saveTOTPSecret(message.secret || null)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  if (message.type === "GENERATE_TOTP") {
+    (async () => {
+      const secret = await getTOTPSecret();
+      if (!secret) { sendResponse({ error: "No secret" }); return; }
+      try {
+        const code = await generateTOTP(secret);
+        // Calculate seconds remaining in current TOTP period
+        const epoch = Math.floor(Date.now() / 1000);
+        const remaining = 30 - (epoch % 30);
+        sendResponse({ code, remaining });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "AUTO_VERIFY_2FA") {
+    // Auto-verify a pending 2FA using stored TOTP secret
+    (async () => {
+      const secret = await getTOTPSecret();
+      if (!secret) {
+        sendResponse({ error: "No TOTP secret configured" });
+        return;
+      }
+      const queue = await getPending2FA();
+      if (message.index < 0 || message.index >= queue.length) {
+        sendResponse({ error: "Invalid challenge index" });
+        return;
+      }
+      const entry = queue[message.index];
+      try {
+        const code = await generateTOTP(secret);
+        await verify2FAAndRetry(
+          entry.challengeId, entry.challengeMetadata,
+          code, entry.userId, entry.retryInfo
+        );
+        await removePending2FA(message.index);
+        if (itemCache.data && itemCache.data.items) {
+          const cached = itemCache.data.items.find((i) => i.assetId === entry.assetId);
+          if (cached) { cached.resalePrice = entry.targetPrice; cached.saleState = "OnSale"; }
+        }
+        if (autoList2FAResolver) {
+          autoList2FAResolver(true);
+        }
+        sendResponse({ success: true, itemName: entry.itemName, price: entry.targetPrice, assetId: entry.assetId });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
     return true;
   }
 
@@ -1146,3 +1399,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+// --- Account Switch Detection ---
+// Clear cached user ID and item cache when the Roblox auth cookie changes
+chrome.cookies.onChanged.addListener((changeInfo) => {
+  if (changeInfo.cookie.name === ".ROBLOSECURITY" && changeInfo.cookie.domain.includes("roblox.com")) {
+    console.log("[UGC] Roblox cookie changed — clearing user cache");
+    cachedUserId = null;
+    itemCache = { data: null, timestamp: 0 };
+    csrfToken = null;
+  }
+});
+
+// --- Data Migration ---
+// Migrate old un-prefixed storage keys to user-scoped keys (one-time)
+(async () => {
+  try {
+    const data = await chrome.storage.local.get("watchlist");
+    if (!data.watchlist || data.watchlist.length === 0) return; // nothing to migrate
+
+    const user = await getAuthenticatedUser().catch(() => null);
+    if (!user) return;
+
+    const uid = user.id;
+    const oldKeys = ["watchlist", "watchTracker", "autoListSettings", "autoListLog", "autoListLastRun", "pending2FA", "totpSecret"];
+    const oldData = await chrome.storage.local.get(oldKeys);
+
+    const migrated = {};
+    for (const key of oldKeys) {
+      if (oldData[key] !== undefined) {
+        migrated[`${key}_${uid}`] = oldData[key];
+      }
+    }
+
+    if (Object.keys(migrated).length > 0) {
+      await chrome.storage.local.set(migrated);
+      await chrome.storage.local.remove(oldKeys);
+      console.log(`[UGC] Migrated ${Object.keys(migrated).length} storage keys to user-scoped (uid: ${uid})`);
+    }
+  } catch (e) {
+    console.error("[UGC] Migration error:", e.message);
+  }
+})();

@@ -5,6 +5,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const itemListEl = document.getElementById("item-list");
   const emptyEl = document.getElementById("empty");
   const addErrorEl = document.getElementById("add-error");
+  const addSuccessEl = document.getElementById("add-success");
+  const loadingCountdownEl = document.getElementById("loading-countdown");
   const assetInput = document.getElementById("asset-input");
   const addBtn = document.getElementById("add-btn");
   const refreshBtn = document.getElementById("refresh-btn");
@@ -12,8 +14,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Tab Bar ---
   const tabSellBtn = document.getElementById("tab-sell");
   const tabWatchBtn = document.getElementById("tab-watch");
+  const tab2faBtn = document.getElementById("tab-2fa");
   const sellContent = document.getElementById("sell-content");
   const watchContent = document.getElementById("watch-content");
+  const twofaContent = document.getElementById("twofa-content");
 
   // --- Watch Tab DOM Refs ---
   const watchAssetInput = document.getElementById("watch-asset-input");
@@ -25,7 +29,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const watchItemListEl = document.getElementById("watch-item-list");
   const watchEmptyEl = document.getElementById("watch-empty");
 
+  // --- 2FA Tab DOM Refs ---
+  const twofaCodeDisplay = document.getElementById("twofa-code-display");
+  const twofaCodeEl = document.getElementById("twofa-code");
+  const twofaSecondsEl = document.getElementById("twofa-seconds");
+  const twofaRingEl = document.getElementById("twofa-ring");
+  const twofaEmptyEl = document.getElementById("twofa-empty");
+  const totpClearBtn = document.getElementById("totp-clear");
+
   let activeTab = "sell";
+  let totpTimerInterval = null;
+  const TOTP_RING_CIRCUMFERENCE = 2 * Math.PI * 35; // ~219.91
 
   // --- Sell Search & Pagination ---
   const sellSearchEl = document.getElementById("sell-search");
@@ -56,6 +70,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const protectedAddInput = document.getElementById("autolist-protected-input");
   const protectedAddBtn = document.getElementById("autolist-protected-add");
   const protectedListEl = document.getElementById("autolist-protected-list");
+
+  const totpSecretInput = document.getElementById("totp-secret-input");
+  const totpToggleBtn = document.getElementById("totp-toggle-vis");
+  const totpSaveBtn = document.getElementById("totp-save");
+  const totpStatusEl = document.getElementById("totp-status");
 
   let autolistOpen = false;
   let protectedSellers = []; // [{ id, username, avatarUrl }]
@@ -150,6 +169,117 @@ document.addEventListener("DOMContentLoaded", () => {
   protectedAddBtn.addEventListener("click", addProtectedSeller);
   protectedAddInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addProtectedSeller();
+  });
+
+  // --- 2FA Tab handlers ---
+  totpToggleBtn.addEventListener("click", () => {
+    const isHidden = totpSecretInput.type === "password";
+    totpSecretInput.type = isHidden ? "text" : "password";
+    totpToggleBtn.textContent = isHidden ? "🙈" : "👁";
+  });
+
+  totpSaveBtn.addEventListener("click", async () => {
+    const val = totpSecretInput.value.trim();
+    await chrome.runtime.sendMessage({ type: "SET_TOTP_SECRET", secret: val || null });
+    totpStatusEl.classList.remove("hidden", "success", "error");
+    if (val) {
+      totpStatusEl.textContent = "✓ Secret saved — generating codes";
+      totpStatusEl.classList.add("success");
+      // Clear input and show placeholder instead of keeping secret in DOM
+      totpSecretInput.value = "";
+      totpSecretInput.placeholder = "Secret saved ✓ (enter new key to replace)";
+      // Start showing code immediately
+      refreshTOTPCode();
+      startTOTPTimer();
+    } else {
+      totpStatusEl.textContent = "Secret cleared";
+      totpStatusEl.classList.add("error");
+      stopTOTPTimer();
+      twofaCodeDisplay.classList.add("hidden");
+      twofaEmptyEl.classList.remove("hidden");
+    }
+    setTimeout(() => totpStatusEl.classList.add("hidden"), 3000);
+  });
+
+  totpClearBtn.addEventListener("click", async () => {
+    totpSecretInput.value = "";
+    totpSecretInput.placeholder = "Base32 key (e.g. JBSWY3DPEHPK3PXP)";
+    await chrome.runtime.sendMessage({ type: "SET_TOTP_SECRET", secret: null });
+    stopTOTPTimer();
+    twofaCodeDisplay.classList.add("hidden");
+    twofaEmptyEl.classList.remove("hidden");
+    totpStatusEl.classList.remove("hidden", "success", "error");
+    totpStatusEl.textContent = "Secret cleared";
+    totpStatusEl.classList.add("error");
+    setTimeout(() => totpStatusEl.classList.add("hidden"), 3000);
+  });
+
+  async function refreshTOTPCode() {
+    const res = await chrome.runtime.sendMessage({ type: "GENERATE_TOTP" });
+    if (res && res.code) {
+      // Format as "123 456"
+      const formatted = res.code.slice(0, 3) + " " + res.code.slice(3);
+      twofaCodeEl.textContent = formatted;
+      twofaCodeDisplay.classList.remove("hidden");
+      twofaEmptyEl.classList.add("hidden");
+      updateRing(res.remaining);
+      return res.remaining;
+    } else {
+      twofaCodeDisplay.classList.add("hidden");
+      twofaEmptyEl.classList.remove("hidden");
+      return null;
+    }
+  }
+
+  function updateRing(remaining) {
+    const fraction = remaining / 30;
+    const offset = TOTP_RING_CIRCUMFERENCE * (1 - fraction);
+    twofaRingEl.style.strokeDasharray = TOTP_RING_CIRCUMFERENCE;
+    twofaRingEl.style.strokeDashoffset = offset;
+    twofaSecondsEl.textContent = remaining;
+
+    // Color changes
+    twofaRingEl.classList.remove("expiring", "critical");
+    if (remaining <= 5) {
+      twofaRingEl.classList.add("critical");
+    } else if (remaining <= 10) {
+      twofaRingEl.classList.add("expiring");
+    }
+  }
+
+  function startTOTPTimer() {
+    stopTOTPTimer();
+    let lastRemaining = -1;
+
+    async function tick() {
+      const epoch = Math.floor(Date.now() / 1000);
+      const remaining = 30 - (epoch % 30);
+
+      // New period — fetch fresh code
+      if (remaining > lastRemaining || lastRemaining === -1) {
+        await refreshTOTPCode();
+      } else {
+        updateRing(remaining);
+      }
+      lastRemaining = remaining;
+    }
+
+    tick();
+    totpTimerInterval = setInterval(tick, 1000);
+  }
+
+  function stopTOTPTimer() {
+    if (totpTimerInterval) {
+      clearInterval(totpTimerInterval);
+      totpTimerInterval = null;
+    }
+  }
+
+  // Check if TOTP secret exists on startup (never fetch the raw secret)
+  chrome.runtime.sendMessage({ type: "GET_TOTP_SECRET" }).then((res) => {
+    if (res && res.exists) {
+      totpSecretInput.placeholder = "Secret saved ✓ (enter new key to replace)";
+    }
   });
 
   autolistStartBtn.addEventListener("click", async () => {
@@ -247,9 +377,17 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function showAddError(msg) {
+    addSuccessEl.classList.add("hidden");
     addErrorEl.textContent = msg;
     addErrorEl.classList.remove("hidden");
     setTimeout(() => addErrorEl.classList.add("hidden"), 4000);
+  }
+
+  function showAddSuccess(msg) {
+    addErrorEl.classList.add("hidden");
+    addSuccessEl.textContent = msg;
+    addSuccessEl.classList.remove("hidden");
+    setTimeout(() => addSuccessEl.classList.add("hidden"), 3000);
   }
 
   function createItemCard(item) {
@@ -614,6 +752,33 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = response.error;
         statusEl.className = "price-status error";
       } else if (response.needsChallenge) {
+        // Try auto-TOTP before showing manual modal
+        const totpRes = await chrome.runtime.sendMessage({ type: "GET_TOTP_SECRET" });
+        if (totpRes && totpRes.exists) {
+          statusEl.textContent = "Auto-2FA...";
+          const autoRes = await chrome.runtime.sendMessage({
+            type: "AUTO_VERIFY_CHALLENGE",
+            challengeId: response.challengeId,
+            challengeMetadata: response.challengeMetadata,
+            retryInfo: response.retryInfo,
+            userId: currentUserId,
+          });
+          if (autoRes && autoRes.success) {
+            showToast("Listed Successfully! (Auto-2FA)");
+            statusEl.textContent = "";
+            statusEl.classList.add("hidden");
+            const saleStateEl = cardEl.querySelector(".item-sale-state");
+            if (saleStateEl) {
+              saleStateEl.textContent = `Listed: R$ ${formatPrice(price)}`;
+              saleStateEl.className = "item-sale-state on-sale";
+            }
+            btnEl.disabled = false;
+            return;
+          }
+          // Auto failed, fall through to manual
+          statusEl.textContent = "Auto-2FA failed, enter code manually";
+          statusEl.className = "price-status error";
+        }
         show2FAModal(response, price, statusEl, btnEl, cardEl);
         return;
       } else {
@@ -759,6 +924,39 @@ document.addEventListener("DOMContentLoaded", () => {
   async function checkPending2FA() {
     const res = await chrome.runtime.sendMessage({ type: "GET_PENDING_2FA" });
     if (res.error || !res.queue || res.queue.length === 0) return;
+
+    // Try auto-verify if TOTP secret is configured
+    const totpRes = await chrome.runtime.sendMessage({ type: "GET_TOTP_SECRET" });
+    if (totpRes && totpRes.exists) {
+      for (let i = 0; i < res.queue.length; i++) {
+        const entry = res.queue[i];
+        const autoRes = await chrome.runtime.sendMessage({ type: "AUTO_VERIFY_2FA", index: 0 });
+        if (autoRes.success) {
+          showToast(`Auto-2FA ✓ ${entry.itemName} at R$ ${formatPrice(entry.targetPrice)}`);
+          // Update card inline
+          const card = itemListEl.querySelector(`.item-card[data-asset-id="${entry.assetId}"]`);
+          if (card) {
+            const saleStateEl = card.querySelector(".item-sale-state");
+            if (saleStateEl) {
+              saleStateEl.textContent = `Listed: R$ ${formatPrice(entry.targetPrice)}`;
+              saleStateEl.className = "item-sale-state on-sale";
+            }
+          }
+          await new Promise((r) => setTimeout(r, 1000)); // brief pause between challenges
+        } else {
+          // Auto failed, fall back to manual for remaining
+          break;
+        }
+      }
+      // Re-check if any remain
+      const recheck = await chrome.runtime.sendMessage({ type: "GET_PENDING_2FA" });
+      if (recheck.error || !recheck.queue || recheck.queue.length === 0) return;
+      pendingQueue = recheck.queue;
+      currentPendingIdx = 0;
+      showNextPending();
+      return;
+    }
+
     pendingQueue = res.queue;
     currentPendingIdx = 0;
     showNextPending();
@@ -797,7 +995,15 @@ document.addEventListener("DOMContentLoaded", () => {
           setTimeout(() => showNextPending(), 500);
         } else {
           closeModal();
-          loadItems(true); // refresh to show new data
+          // Update the card inline instead of reloading everything
+          const card = itemListEl.querySelector(`.item-card[data-asset-id="${entry.assetId}"]`);
+          if (card) {
+            const saleStateEl = card.querySelector(".item-sale-state");
+            if (saleStateEl) {
+              saleStateEl.textContent = `Listed: R$ ${formatPrice(entry.targetPrice)}`;
+              saleStateEl.className = "item-sale-state on-sale";
+            }
+          }
         }
       },
       onSkip: async () => {
@@ -814,7 +1020,21 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Promise-based 2FA prompt — resolves true on success, false on skip
-  function prompt2FA(challengeData, price) {
+  async function prompt2FA(challengeData, price) {
+    // Try auto-TOTP first
+    const totpRes = await chrome.runtime.sendMessage({ type: "GET_TOTP_SECRET" });
+    if (totpRes && totpRes.exists) {
+      const autoRes = await chrome.runtime.sendMessage({
+        type: "AUTO_VERIFY_CHALLENGE",
+        challengeId: challengeData.challengeId,
+        challengeMetadata: challengeData.challengeMetadata,
+        retryInfo: challengeData.retryInfo,
+        userId: currentUserId,
+      });
+      if (autoRes && autoRes.success) return true;
+      // Fall through to manual if auto fails
+    }
+
     return new Promise((resolve) => {
       openModal({
         itemName: "2FA Required",
@@ -1019,6 +1239,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     addBtn.disabled = true;
     addErrorEl.classList.add("hidden");
+    addSuccessEl.classList.add("hidden");
+
+    // Show spinner in button
+    addBtn.innerHTML = '<span class="add-spinner"></span>';
 
     const response = await chrome.runtime.sendMessage({
       type: "ADD_ITEM",
@@ -1026,6 +1250,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     addBtn.disabled = false;
+    addBtn.textContent = "Add";
 
     if (response.error) {
       showAddError(response.error);
@@ -1033,6 +1258,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     assetInput.value = "";
+    showAddSuccess(`✓ ${response.item.name} added successfully`);
 
     allSellItems.push(response.item);
 
@@ -1049,8 +1275,39 @@ document.addEventListener("DOMContentLoaded", () => {
     sellSearchEl.classList.add("hidden");
     sellPaginationEl.classList.add("hidden");
 
+    // Estimate load time and start countdown
+    // ~1.5s per item (500ms throttle × 2 API calls + 3s pause every 5 items)
+    let countdownTimer = null;
+    try {
+      const storageData = await chrome.storage.local.get("watchlist");
+      const itemCount = (storageData.watchlist || []).length;
+      if (itemCount > 0 && forceRefresh) {
+        const batchPauses = Math.floor(itemCount / 5) * 3;
+        const estimatedSecs = Math.ceil(itemCount * 1.5 + batchPauses);
+        let remaining = estimatedSecs;
+
+        loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
+        countdownTimer = setInterval(() => {
+          remaining--;
+          if (remaining > 0) {
+            loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
+          } else {
+            loadingCountdownEl.textContent = "almost done...";
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+          }
+        }, 1000);
+      } else {
+        loadingCountdownEl.textContent = "";
+      }
+    } catch (_) {
+      loadingCountdownEl.textContent = "";
+    }
+
     try {
       const response = await chrome.runtime.sendMessage({ type: "GET_ITEMS", forceRefresh });
+      if (countdownTimer) clearInterval(countdownTimer);
+      loadingCountdownEl.textContent = "";
 
       if (response.error) {
         showState("error");
@@ -1065,6 +1322,8 @@ document.addEventListener("DOMContentLoaded", () => {
       allSellItems = response.items;
       renderSellPage();
     } catch (err) {
+      if (countdownTimer) clearInterval(countdownTimer);
+      loadingCountdownEl.textContent = "";
       showState("error");
       errorMessageEl.textContent = `Error: ${err.message}`;
     }
@@ -1102,24 +1361,24 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // --- Tab Switching ---
-  tabSellBtn.addEventListener("click", () => {
-    if (activeTab === "sell") return;
-    activeTab = "sell";
-    tabSellBtn.classList.add("active");
-    tabWatchBtn.classList.remove("active");
-    sellContent.classList.remove("hidden");
-    watchContent.classList.add("hidden");
-  });
+  function switchTab(tab) {
+    if (activeTab === tab) return;
+    activeTab = tab;
+    tabSellBtn.classList.toggle("active", tab === "sell");
+    tabWatchBtn.classList.toggle("active", tab === "watch");
+    tab2faBtn.classList.toggle("active", tab === "2fa");
+    sellContent.classList.toggle("hidden", tab !== "sell");
+    watchContent.classList.toggle("hidden", tab !== "watch");
+    twofaContent.classList.toggle("hidden", tab !== "2fa");
 
-  tabWatchBtn.addEventListener("click", () => {
-    if (activeTab === "watch") return;
-    activeTab = "watch";
-    tabWatchBtn.classList.add("active");
-    tabSellBtn.classList.remove("active");
-    watchContent.classList.remove("hidden");
-    sellContent.classList.add("hidden");
-    loadWatchItems();
-  });
+    if (tab === "watch") loadWatchItems();
+    if (tab === "2fa") startTOTPTimer();
+    if (tab !== "2fa") stopTOTPTimer();
+  }
+
+  tabSellBtn.addEventListener("click", () => switchTab("sell"));
+  tabWatchBtn.addEventListener("click", () => switchTab("watch"));
+  tab2faBtn.addEventListener("click", () => switchTab("2fa"));
 
   // Refresh button: refresh whichever tab is active
   refreshBtn.addEventListener("click", () => {

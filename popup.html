@@ -17,6 +17,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" id="tab-sell">Sell</button>
       <button class="tab-btn" id="tab-watch">Watch</button>
+      <button class="tab-btn" id="tab-2fa">2FA</button>
     </div>
 
     <!-- ===== Sell Tab ===== -->
@@ -27,6 +28,7 @@
       </div>
 
       <div id="add-error" class="add-error hidden"></div>
+      <div id="add-success" class="add-success hidden"></div>
 
       <!-- Auto-List Panel -->
       <div class="autolist-panel" id="autolist-panel">
@@ -69,6 +71,7 @@
       <div id="loading" class="loading hidden">
         <div class="spinner"></div>
         <p>Loading items...</p>
+        <p id="loading-countdown" class="loading-countdown"></p>
       </div>
 
       <div id="error" class="error hidden">
@@ -111,6 +114,44 @@
 
       <div id="watch-empty" class="empty">
         <p>No items being watched. Add a UGC limited to track its stock.</p>
+      </div>
+    </div>
+
+    <!-- ===== 2FA Tab ===== -->
+    <div id="twofa-content" class="hidden">
+      <div class="twofa-tab-body">
+        <!-- Secret Input -->
+        <div class="twofa-secret-section">
+          <label class="twofa-label">TOTP Secret Key</label>
+          <div class="twofa-secret-row">
+            <input type="password" id="totp-secret-input" placeholder="Base32 key (e.g. JBSWY3DPEHPK3PXP)" class="twofa-secret-input" spellcheck="false" autocomplete="off">
+            <button id="totp-toggle-vis" class="totp-toggle-btn" title="Show/hide">👁</button>
+          </div>
+          <div class="twofa-secret-actions">
+            <button id="totp-save" class="totp-save-btn">Save</button>
+            <button id="totp-clear" class="totp-clear-btn">Clear</button>
+          </div>
+          <div id="totp-status" class="totp-status hidden"></div>
+        </div>
+
+        <!-- Code Display -->
+        <div id="twofa-code-display" class="twofa-code-display hidden">
+          <div class="twofa-countdown-ring">
+            <svg viewBox="0 0 80 80">
+              <circle class="twofa-ring-bg" cx="40" cy="40" r="35"></circle>
+              <circle class="twofa-ring-progress" id="twofa-ring" cx="40" cy="40" r="35"></circle>
+            </svg>
+            <span class="twofa-seconds" id="twofa-seconds">30</span>
+          </div>
+          <div class="twofa-code" id="twofa-code">000 000</div>
+          <div class="twofa-hint">Code auto-refreshes every 30 seconds</div>
+        </div>
+
+        <!-- No secret state -->
+        <div id="twofa-empty" class="twofa-empty">
+          <p>Enter your TOTP secret key above to generate 2FA codes automatically.</p>
+          <p class="twofa-hint-text">Find this key when setting up 2FA on Roblox — look for "enter manually" or "can't scan QR code".</p>
+        </div>
       </div>
     </div>
   </div>
