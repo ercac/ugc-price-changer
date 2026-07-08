@@ -69,6 +69,17 @@ body {
   color: #fff;
 }
 
+.refresh-btn.refreshing {
+  animation: refreshSpin 1s linear infinite;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+@keyframes refreshSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Add item bar */
 .add-item {
   display: flex;
@@ -1459,6 +1470,14 @@ body {
 
 .toast-icon {
   font-size: 14px;
+}
+
+.success-toast.toast-error {
+  background-color: #e74c3c;
+}
+
+.success-toast.toast-error .toast-icon {
+  display: none;
 }
 
 @keyframes toastIn {

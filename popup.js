@@ -839,10 +839,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let pendingQueue = [];
   let currentPendingIdx = 0;
 
-  function showToast(msg) {
+  function showToast(msg, isError = false) {
     toastMsg.textContent = msg;
+    toast.classList.toggle("toast-error", isError);
     toast.classList.remove("hidden");
-    setTimeout(() => toast.classList.add("hidden"), 3000);
+    setTimeout(() => toast.classList.add("hidden"), isError ? 4000 : 3000);
   }
 
   function openModal(opts) {
@@ -1292,36 +1293,42 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(renderLastUpdated, 30000);
 
   async function loadItems(forceRefresh = false) {
-    showState("loading");
-    sellSearchEl.classList.add("hidden");
-    sellPaginationEl.classList.add("hidden");
+    // If a list is already on screen when a refresh starts, keep it visible
+    // and refresh in the background instead of blanking to a spinner
+    const backgroundRefresh = forceRefresh && allSellItems.length > 0;
 
-    // Estimate load time and start countdown
+    if (backgroundRefresh) {
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add("refreshing");
+    } else {
+      showState("loading");
+      sellSearchEl.classList.add("hidden");
+      sellPaginationEl.classList.add("hidden");
+    }
+
+    // Estimate load time and start countdown — shown in the header label
+    // during a background refresh so the list stays visible.
     // ~1.5s per item (500ms throttle × 2 API calls + 3s pause every 5 items)
     let countdownTimer = null;
-    try {
-      const storageData = await chrome.storage.local.get("watchlist");
-      const itemCount = (storageData.watchlist || []).length;
-      if (itemCount > 0 && forceRefresh) {
-        const batchPauses = Math.floor(itemCount / 5) * 3;
-        const estimatedSecs = Math.ceil(itemCount * 1.5 + batchPauses);
-        let remaining = estimatedSecs;
+    const countdownEl = backgroundRefresh ? lastUpdatedEl : loadingCountdownEl;
+    const itemCount = allSellItems.length;
+    if (forceRefresh && itemCount > 0) {
+      const batchPauses = Math.floor(itemCount / 5) * 3;
+      const estimatedSecs = Math.ceil(itemCount * 1.5 + batchPauses);
+      let remaining = estimatedSecs;
 
-        loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
-        countdownTimer = setInterval(() => {
-          remaining--;
-          if (remaining > 0) {
-            loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
-          } else {
-            loadingCountdownEl.textContent = "almost done...";
-            clearInterval(countdownTimer);
-            countdownTimer = null;
-          }
-        }, 1000);
-      } else {
-        loadingCountdownEl.textContent = "";
-      }
-    } catch (_) {
+      countdownEl.textContent = `refreshing… est. ${remaining}s`;
+      countdownTimer = setInterval(() => {
+        remaining--;
+        if (remaining > 0) {
+          countdownEl.textContent = `refreshing… est. ${remaining}s`;
+        } else {
+          countdownEl.textContent = "refreshing… almost done";
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+        }
+      }, 1000);
+    } else {
       loadingCountdownEl.textContent = "";
     }
 
@@ -1331,8 +1338,14 @@ document.addEventListener("DOMContentLoaded", () => {
       loadingCountdownEl.textContent = "";
 
       if (response.error) {
-        showState("error");
-        errorMessageEl.textContent = response.error;
+        if (backgroundRefresh) {
+          // Keep the existing list on screen; just report the failure
+          renderLastUpdated();
+          showToast(`Refresh failed: ${response.error}`, true);
+        } else {
+          showState("error");
+          errorMessageEl.textContent = response.error;
+        }
         return;
       }
 
@@ -1348,8 +1361,16 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       if (countdownTimer) clearInterval(countdownTimer);
       loadingCountdownEl.textContent = "";
-      showState("error");
-      errorMessageEl.textContent = `Error: ${err.message}`;
+      if (backgroundRefresh) {
+        renderLastUpdated();
+        showToast(`Refresh failed: ${err.message}`, true);
+      } else {
+        showState("error");
+        errorMessageEl.textContent = `Error: ${err.message}`;
+      }
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove("refreshing");
     }
   }
 
