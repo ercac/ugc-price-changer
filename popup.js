@@ -11,6 +11,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const addBtn = document.getElementById("add-btn");
   const refreshBtn = document.getElementById("refresh-btn");
   const lastUpdatedEl = document.getElementById("last-updated");
+  const loadProgressEl = document.getElementById("load-progress");
+  const loadProgressBarEl = document.getElementById("load-progress-bar");
+  const loadProgressFillEl = document.getElementById("load-progress-fill");
 
   // --- Tab Bar ---
   const tabSellBtn = document.getElementById("tab-sell");
@@ -64,6 +67,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const autolistBadge = document.getElementById("autolist-badge");
   const autolistInterval = document.getElementById("autolist-interval");
   const autolistUndercut = document.getElementById("autolist-undercut");
+  const autolistListCount = document.getElementById("autolist-listcount");
   const autolistStartBtn = document.getElementById("autolist-start");
   const autolistStopBtn = document.getElementById("autolist-stop");
   const autolistStatus = document.getElementById("autolist-status");
@@ -288,6 +292,7 @@ document.addEventListener("DOMContentLoaded", () => {
       enabled: true,
       intervalMin: Math.max(3, Number(autolistInterval.value) || 5),
       undercutAmount: Math.max(1, Number(autolistUndercut.value) || 1),
+      defaultListCount: Math.max(1, Number(autolistListCount.value) || 1),
       priceFloors: {},
       listCounts: {},
       protectedSellers: protectedSellers,
@@ -315,6 +320,7 @@ document.addEventListener("DOMContentLoaded", () => {
     autolistBadge.classList.toggle("hidden", !running);
     autolistInterval.disabled = running;
     autolistUndercut.disabled = running;
+    autolistListCount.disabled = running;
     protectedAddInput.disabled = running;
     protectedAddBtn.disabled = running;
     renderProtectedChips(running);
@@ -339,6 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.settings) {
       autolistInterval.value = state.settings.intervalMin || 5;
       autolistUndercut.value = state.settings.undercutAmount || 1;
+      autolistListCount.value = state.settings.defaultListCount || 1;
       if (state.settings.protectedSellers && state.settings.protectedSellers.length > 0) {
         protectedSellers = state.settings.protectedSellers;
         renderProtectedChips(state.running);
@@ -1272,6 +1279,23 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSellPage();
   }
 
+  // --- Loading progress (streamed from the background during item fetches) ---
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "GET_ITEMS_PROGRESS" && msg.total > 0) {
+      loadProgressEl.textContent = `${msg.loaded}/${msg.total} items loaded`;
+      loadProgressEl.classList.remove("hidden");
+      loadProgressBarEl.classList.remove("hidden");
+      loadProgressFillEl.style.width = `${Math.round((msg.loaded / msg.total) * 100)}%`;
+    }
+  });
+
+  function hideLoadProgress() {
+    loadProgressEl.classList.add("hidden");
+    loadProgressBarEl.classList.add("hidden");
+    loadProgressFillEl.style.width = "0%";
+  }
+
   // --- Last-updated label ---
   let lastUpdatedTs = null;
 
@@ -1371,6 +1395,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       refreshBtn.disabled = false;
       refreshBtn.classList.remove("refreshing");
+      hideLoadProgress();
     }
   }
 

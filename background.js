@@ -504,6 +504,7 @@ async function getAutoListSettings() {
     enabled: false,
     intervalMin: 5,       // minutes between cycles
     undercutAmount: 1,    // R$ to undercut by
+    defaultListCount: 1,  // copies of each item to list (per-item List # overrides)
     priceFloors: {},      // { assetId: minPrice }
     listCounts: {},       // { assetId: count } — how many copies to list
     protectedSellers: [], // [{ id, username, avatarUrl }] — alt accounts to not undercut
@@ -561,7 +562,9 @@ async function runAutoListCycle() {
       autoIdx++;
 
       const floor = settings.priceFloors[detail.id] || 0;
-      const listCount = settings.listCounts[detail.id] || 1;
+      // Per-item List # wins; otherwise the panel-wide default applies.
+      // Capped at owned copies further down (min with instances.length).
+      const listCount = settings.listCounts[detail.id] || settings.defaultListCount || 1;
 
       try {
         // Get the lowest reseller on the market
@@ -869,7 +872,7 @@ async function handleGetItems(forceRefresh = false) {
       isProtectedSeller: false,
       bestSeller: null,
       priceFloor: autoSettings.priceFloors[detail.id] || 0,
-      listCount: autoSettings.listCounts[detail.id] || 1,
+      listCount: autoSettings.listCounts[detail.id] || autoSettings.defaultListCount || 1,
       allInstances: [],
     };
 
@@ -929,6 +932,13 @@ async function handleGetItems(forceRefresh = false) {
     }
 
     items.push(item);
+
+    // Notify the popup (if open) of loading progress
+    chrome.runtime.sendMessage({
+      type: "GET_ITEMS_PROGRESS",
+      loaded: items.length,
+      total: catalogDetails.length,
+    }).catch(() => {});
   }
 
   const result = { items, userId, lastUpdated: Date.now() };

@@ -9,10 +9,16 @@
 <body>
   <div id="app">
     <div class="header">
-      <h1>UGC Price Changer</h1>
+      <div class="header-left">
+        <h1>UGC Price Changer</h1>
+        <span id="load-progress" class="load-progress hidden"></span>
+      </div>
       <div class="header-actions">
         <span id="last-updated" class="last-updated" title="Data age — press refresh to fetch fresh prices"></span>
         <button id="refresh-btn" class="refresh-btn" title="Refresh prices">&#x21bb;</button>
+      </div>
+      <div id="load-progress-bar" class="load-progress-bar hidden">
+        <div id="load-progress-fill" class="load-progress-fill"></div>
       </div>
     </div>
 
@@ -48,6 +54,10 @@
           <div class="autolist-row">
             <label>Undercut by R$:</label>
             <input type="number" id="autolist-undercut" min="1" max="10000" value="1" class="autolist-input">
+          </div>
+          <div class="autolist-row">
+            <label title="Copies of each item to list per cycle (capped at how many you own; a card's List # overrides this)">List per item:</label>
+            <input type="number" id="autolist-listcount" min="1" max="100" value="1" class="autolist-input">
           </div>
           <div class="autolist-protected-section">
             <div class="autolist-row">
