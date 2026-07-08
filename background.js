@@ -149,9 +149,58 @@ async function robloxFetch(url, options = {}) {
 }
 
 // --- Cache ---
+// Persisted to chrome.storage.local (user-scoped) so it survives service worker
+// restarts. Never expires on its own — only replaced by a manual refresh,
+// patched by price changes, or patched by auto-list cycles.
 
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-let itemCache = { data: null, timestamp: 0 };
+async function getItemCache() {
+  const uid = await getCurrentUserId();
+  const key = `itemCache_${uid}`;
+  const data = await chrome.storage.local.get(key);
+  return data[key] || null; // { items, userId, lastUpdated }
+}
+
+async function saveItemCache(cache) {
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.set({ [`itemCache_${uid}`]: cache });
+}
+
+async function clearItemCache() {
+  const uid = await getCurrentUserId();
+  await chrome.storage.local.remove(`itemCache_${uid}`);
+}
+
+// Apply a mutation to the cached items (no-op if no cache exists yet)
+async function patchItemCache(patchFn) {
+  try {
+    const cache = await getItemCache();
+    if (!cache || !cache.items) return;
+    patchFn(cache);
+    await saveItemCache(cache);
+  } catch (e) {
+    console.warn("[UGC] Cache patch failed:", e.message);
+  }
+}
+
+// Patch a single instance's listing price into the cache
+async function patchCachePrice(collectibleItemId, collectibleInstanceId, price) {
+  await patchItemCache((cache) => {
+    const cached = cache.items.find((i) => i.collectibleItemId === collectibleItemId);
+    if (!cached) return;
+    cached.resalePrice = price;
+    cached.saleState = "OnSale";
+    if (!cached.userLowestPrice || price < cached.userLowestPrice) {
+      cached.userLowestPrice = price;
+    }
+    const inst = (cached.allInstances || []).find(
+      (i) => i.collectibleInstanceId === collectibleInstanceId
+    );
+    if (inst) {
+      inst.saleState = "OnSale";
+      inst.price = price;
+    }
+  });
+}
 
 // --- User-scoped Storage ---
 // All lists are scoped to the logged-in Roblox user ID so switching accounts
@@ -483,6 +532,9 @@ async function runAutoListCycle() {
 
   console.log("[AutoList] Starting cycle...");
   const log = [];
+  // Fresh data learned this cycle, applied to the persisted item cache at the
+  // end so the popup shows updated prices without a full refetch
+  const cyclePatches = [];
 
   try {
     const user = await getAuthenticatedUser();
@@ -520,9 +572,12 @@ async function runAutoListCycle() {
         }
 
         const bestSeller = resellers[0];
+        const patch = { assetId: detail.id, bestSeller: { ...bestSeller } };
+        cyclePatches.push(patch);
 
         // If we're already the cheapest — skip
         if (bestSeller.sellerId === userId) {
+          patch.isBestPrice = true;
           log.push({ item: detail.name, msg: `Already best seller at R$ ${bestSeller.price}, skipping`, time: Date.now() });
           continue;
         }
@@ -534,6 +589,7 @@ async function runAutoListCycle() {
           (s.username && bestSeller.sellerName && s.username.toLowerCase() === bestSeller.sellerName.toLowerCase())
         );
         if (isProtected) {
+          patch.isProtectedSeller = true;
           log.push({ item: detail.name, msg: `Protected alt (${bestSeller.sellerName}) is lowest at R$ ${bestSeller.price}, skipping`, time: Date.now() });
           continue;
         }
@@ -640,6 +696,10 @@ async function runAutoListCycle() {
         }
 
         if (listedCount > 0) {
+          // We just undercut everyone — we're now the best seller
+          patch.listedPrice = targetPrice;
+          patch.isBestPrice = true;
+          patch.bestSeller = { price: targetPrice, sellerId: userId, sellerName: user.name || null };
           const copyText = listedCount > 1 ? `${listedCount} copies` : "1 copy";
           log.push({ item: detail.name, msg: `${copyText} at R$ ${targetPrice} (undercut R$ ${bestSeller.price})`, time: Date.now(), success: true });
         } else {
@@ -663,8 +723,25 @@ async function runAutoListCycle() {
   const uid = await getCurrentUserId();
   await chrome.storage.local.set({ [`autoListLog_${uid}`]: log, [`autoListLastRun_${uid}`]: Date.now() });
 
-  // Invalidate item cache so popup shows fresh data
-  itemCache = { data: null, timestamp: 0 };
+  // Patch the persisted item cache with what this cycle learned — the popup
+  // shows fresh prices without ever triggering a full refetch
+  if (cyclePatches.length > 0) {
+    await patchItemCache((cache) => {
+      for (const p of cyclePatches) {
+        const cached = cache.items.find((i) => i.assetId === p.assetId);
+        if (!cached) continue;
+        if (p.bestSeller) cached.bestSeller = p.bestSeller;
+        if (p.isBestPrice !== undefined) cached.isBestPrice = p.isBestPrice;
+        if (p.isProtectedSeller !== undefined) cached.isProtectedSeller = p.isProtectedSeller;
+        if (p.listedPrice) {
+          cached.resalePrice = p.listedPrice;
+          cached.saleState = "OnSale";
+          cached.userLowestPrice = p.listedPrice;
+        }
+      }
+      cache.lastUpdated = Date.now();
+    });
+  }
 
   scheduleNextCycle(settings);
   return { log };
@@ -731,14 +808,20 @@ async function handleGetItems(forceRefresh = false) {
   const watchlist = await getWatchlist();
 
   if (watchlist.length === 0) {
-    itemCache = { data: null, timestamp: 0 };
-    return { items: [] };
+    await clearItemCache();
+    return { items: [], lastUpdated: null };
   }
 
-  // Return cached data if fresh
-  if (!forceRefresh && itemCache.data && (Date.now() - itemCache.timestamp) < CACHE_TTL) {
-    console.log("[UGC] Returning cached items");
-    return itemCache.data;
+  // No automatic refreshing: always return the persisted cache if it exists,
+  // no matter how old. A network fetch only happens on manual refresh
+  // (forceRefresh) or when no cache exists yet (first load / new account).
+  if (!forceRefresh) {
+    const cached = await getItemCache();
+    if (cached) {
+      console.log("[UGC] Returning persisted cached items");
+      return cached;
+    }
+    console.log("[UGC] No cache yet — doing initial load");
   }
 
   // Get user ID for resellable instance lookups
@@ -848,8 +931,8 @@ async function handleGetItems(forceRefresh = false) {
     items.push(item);
   }
 
-  const result = { items, userId };
-  itemCache = { data: result, timestamp: Date.now() };
+  const result = { items, userId, lastUpdated: Date.now() };
+  await saveItemCache(result);
   return result;
 }
 
@@ -962,10 +1045,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "ADD_ITEM") {
     handleAddItem(message.assetId)
-      .then((item) => {
+      .then(async (item) => {
         // Append to cache instead of invalidating — avoids full reload on next refresh
-        if (itemCache.data && itemCache.data.items) {
-          itemCache.data.items.push(item);
+        const cache = await getItemCache().catch(() => null);
+        if (cache && cache.items) {
+          cache.items.push(item);
+          await saveItemCache(cache);
+        } else {
+          // First item ever — create the cache so opening the popup doesn't refetch
+          const uid = await getCurrentUserId().catch(() => null);
+          await saveItemCache({ items: [item], userId: uid, lastUpdated: Date.now() });
         }
         sendResponse({ item });
       })
@@ -975,13 +1064,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "REMOVE_ITEM") {
     handleRemoveItem(message.assetId)
-      .then((resp) => {
+      .then(async (resp) => {
         // Remove from cache instead of invalidating
-        if (itemCache.data && itemCache.data.items) {
-          itemCache.data.items = itemCache.data.items.filter(
+        await patchItemCache((cache) => {
+          cache.items = cache.items.filter(
             (i) => i.assetId !== Number(message.assetId)
           );
-        }
+        });
         sendResponse(resp);
       })
       .catch((err) => sendResponse({ error: err.message }));
@@ -1013,7 +1102,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if ((i + 1) % 10 === 0) await sleep(2000);
         }
       }
-      itemCache = { data: null, timestamp: 0 };
+      // Patch the cache to reflect the delisting instead of wiping it
+      await patchItemCache((cache) => {
+        const cached = cache.items.find((i) => i.collectibleItemId === collectibleItemId);
+        if (!cached) return;
+        cached.saleState = "OffSale";
+        cached.resalePrice = null;
+        cached.userLowestPrice = null;
+        cached.isBestPrice = false;
+        for (const inst of cached.allInstances || []) {
+          if (inst.saleState === "OnSale") inst.saleState = "OffSale";
+        }
+      });
       sendResponse({ delisted, errors });
     })();
     return true;
@@ -1022,7 +1122,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "UPDATE_PRICE") {
     const { collectibleItemId, collectibleInstanceId, collectibleProductId, price, userId } = message;
     updateResalePrice(collectibleItemId, collectibleInstanceId, collectibleProductId, price, userId)
-      .then(sendResponse)
+      .then(async (result) => {
+        if (result && result.success) {
+          await patchCachePrice(collectibleItemId, collectibleInstanceId, price);
+        }
+        sendResponse(result);
+      })
       .catch((err) => sendResponse({ error: err.message }));
     return true;
   }
@@ -1030,7 +1135,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "VERIFY_2FA") {
     const { challengeId, challengeMetadata, code, userId, retryInfo } = message;
     verify2FAAndRetry(challengeId, challengeMetadata, code, userId, retryInfo)
-      .then(sendResponse)
+      .then(async (result) => {
+        const ri = retryInfo || {};
+        if (ri.collectibleItemId && ri.instanceId && ri.price) {
+          await patchCachePrice(ri.collectibleItemId, ri.instanceId, ri.price);
+        }
+        sendResponse(result);
+      })
       .catch((err) => sendResponse({ error: err.message }));
     return true;
   }
@@ -1097,13 +1208,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         );
         await removePending2FA(index);
         // Update cache inline instead of invalidating (avoids full reload in popup)
-        if (itemCache.data && itemCache.data.items) {
-          const cached = itemCache.data.items.find((i) => i.assetId === entry.assetId);
+        await patchItemCache((cache) => {
+          const cached = cache.items.find((i) => i.assetId === entry.assetId);
           if (cached) {
             cached.resalePrice = entry.targetPrice;
             cached.saleState = "OnSale";
           }
-        }
+        });
         sendResponse({ success: true, itemName: entry.itemName, price: entry.targetPrice, assetId: entry.assetId });
 
         // Resume the paused auto-list cycle instead of restarting
@@ -1157,13 +1268,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           results.failed++;
         }
       }
-      // Update cache inline instead of invalidating
-      if (itemCache.data && itemCache.data.items) {
-        const cached = itemCache.data.items.find((i) => i.collectibleItemId === collectibleItemId);
-        if (cached) {
-          cached.resalePrice = price;
-          cached.saleState = "OnSale";
-        }
+      // Update cache inline instead of invalidating (only if something listed)
+      if (results.listed > 0) {
+        await patchItemCache((cache) => {
+          const cached = cache.items.find((i) => i.collectibleItemId === collectibleItemId);
+          if (cached) {
+            cached.resalePrice = price;
+            cached.saleState = "OnSale";
+            if (!cached.userLowestPrice || price < cached.userLowestPrice) {
+              cached.userLowestPrice = price;
+            }
+          }
+        });
       }
       sendResponse(results);
     })();
@@ -1190,8 +1306,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getAutoListSettings().then((settings) => {
       // Store as array of { id, username, avatarUrl } objects
       settings.protectedSellers = (message.sellers || []).filter((s) => s && s.id > 0);
-      saveAutoListSettings(settings).then(() => {
-        itemCache = { data: null, timestamp: 0 }; // invalidate so (Alt) tags refresh
+      saveAutoListSettings(settings).then(async () => {
+        // Recompute (Alt) tags in the cache instead of invalidating it
+        await patchItemCache((cache) => {
+          for (const item of cache.items) {
+            item.isProtectedSeller = !item.isBestPrice && item.bestSeller &&
+              settings.protectedSellers.some((s) =>
+                (s.id && item.bestSeller.sellerId && s.id === item.bestSeller.sellerId) ||
+                (s.username && item.bestSeller.sellerName && s.username.toLowerCase() === item.bestSeller.sellerName.toLowerCase())
+              );
+          }
+        });
         sendResponse({ success: true });
       });
     });
@@ -1210,6 +1335,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message.challengeId, message.challengeMetadata,
           code, message.userId, message.retryInfo
         );
+        const ri = message.retryInfo || {};
+        if (ri.collectibleItemId && ri.instanceId && ri.price) {
+          await patchCachePrice(ri.collectibleItemId, ri.instanceId, ri.price);
+        }
         sendResponse({ success: true });
       } catch (err) {
         console.error("[TOTP] Auto-verify failed:", err.message);
@@ -1271,10 +1400,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           code, entry.userId, entry.retryInfo
         );
         await removePending2FA(message.index);
-        if (itemCache.data && itemCache.data.items) {
-          const cached = itemCache.data.items.find((i) => i.assetId === entry.assetId);
+        await patchItemCache((cache) => {
+          const cached = cache.items.find((i) => i.assetId === entry.assetId);
           if (cached) { cached.resalePrice = entry.targetPrice; cached.saleState = "OnSale"; }
-        }
+        });
         if (autoList2FAResolver) {
           autoList2FAResolver(true);
         }
@@ -1404,9 +1533,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Clear cached user ID and item cache when the Roblox auth cookie changes
 chrome.cookies.onChanged.addListener((changeInfo) => {
   if (changeInfo.cookie.name === ".ROBLOSECURITY" && changeInfo.cookie.domain.includes("roblox.com")) {
+    // Item caches are stored per-user, so no need to clear them — each account
+    // keeps its own cache and gets it back when switching back
     console.log("[UGC] Roblox cookie changed — clearing user cache");
     cachedUserId = null;
-    itemCache = { data: null, timestamp: 0 };
     csrfToken = null;
   }
 });

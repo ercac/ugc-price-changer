@@ -37,6 +37,18 @@ body {
   color: #ffffff;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.last-updated {
+  font-size: 11px;
+  color: #777;
+  white-space: nowrap;
+}
+
 .refresh-btn {
   background: none;
   border: 1px solid #393b3d;

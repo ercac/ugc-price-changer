@@ -10,6 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const assetInput = document.getElementById("asset-input");
   const addBtn = document.getElementById("add-btn");
   const refreshBtn = document.getElementById("refresh-btn");
+  const lastUpdatedEl = document.getElementById("last-updated");
 
   // --- Tab Bar ---
   const tabSellBtn = document.getElementById("tab-sell");
@@ -1270,6 +1271,26 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSellPage();
   }
 
+  // --- Last-updated label ---
+  let lastUpdatedTs = null;
+
+  function renderLastUpdated() {
+    if (!lastUpdatedTs) {
+      lastUpdatedEl.textContent = "";
+      return;
+    }
+    const mins = Math.floor((Date.now() - lastUpdatedTs) / 60000);
+    let text;
+    if (mins < 1) text = "updated just now";
+    else if (mins < 60) text = `updated ${mins}m ago`;
+    else if (mins < 1440) text = `updated ${Math.floor(mins / 60)}h ago`;
+    else text = `updated ${Math.floor(mins / 1440)}d ago`;
+    lastUpdatedEl.textContent = text;
+  }
+
+  // Keep the label current while the popup stays open
+  setInterval(renderLastUpdated, 30000);
+
   async function loadItems(forceRefresh = false) {
     showState("loading");
     sellSearchEl.classList.add("hidden");
@@ -1318,6 +1339,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (response.userId) {
         currentUserId = response.userId;
       }
+
+      lastUpdatedTs = response.lastUpdated || null;
+      renderLastUpdated();
 
       allSellItems = response.items;
       renderSellPage();
