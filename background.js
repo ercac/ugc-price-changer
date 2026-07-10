@@ -1129,6 +1129,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "REMOVE_ITEMS") {
+    (async () => {
+      try {
+        const ids = (message.assetIds || []).map(Number).filter((id) => id > 0);
+        if (ids.length === 0) {
+          sendResponse({ error: "No items to remove" });
+          return;
+        }
+        const idSet = new Set(ids);
+        const watchlist = await getWatchlist();
+        await saveWatchlist(watchlist.filter((id) => !idSet.has(id)));
+        await patchItemCache((cache) => {
+          cache.items = cache.items.filter((i) => !idSet.has(i.assetId));
+        });
+        sendResponse({ success: true, removed: ids.length });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
+
   if (message.type === "UPDATE_PRICE") {
     const { collectibleItemId, collectibleInstanceId, collectibleProductId, price, userId } = message;
     updateResalePrice(collectibleItemId, collectibleInstanceId, collectibleProductId, price, userId)

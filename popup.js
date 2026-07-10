@@ -58,6 +58,63 @@ document.addEventListener("DOMContentLoaded", () => {
   let sellPage = 1;
   const SELL_PAGE_SIZE = 10;
 
+  // --- Multi-select removal ---
+  const selectBarEl = document.getElementById("select-bar");
+  const selectCountEl = document.getElementById("select-count");
+  const selectRemoveBtn = document.getElementById("select-remove-btn");
+  const selectClearBtn = document.getElementById("select-clear-btn");
+  const selectedAssetIds = new Set();
+
+  function updateSelectBar() {
+    const n = selectedAssetIds.size;
+    selectBarEl.classList.toggle("hidden", n === 0);
+    selectCountEl.textContent = `${n} selected`;
+  }
+
+  // Drop selections pointing at items that no longer exist (e.g. after a refresh)
+  function pruneSelection() {
+    for (const id of [...selectedAssetIds]) {
+      if (!allSellItems.some((item) => item.assetId === id)) {
+        selectedAssetIds.delete(id);
+      }
+    }
+    updateSelectBar();
+  }
+
+  selectClearBtn.addEventListener("click", () => {
+    selectedAssetIds.clear();
+    updateSelectBar();
+    renderSellPage();
+  });
+
+  selectRemoveBtn.addEventListener("click", async () => {
+    const ids = [...selectedAssetIds];
+    if (ids.length === 0) return;
+
+    const plural = ids.length !== 1 ? "s" : "";
+    const confirmed = await showConfirm(`Remove ${ids.length} item${plural} from this list?`);
+    if (!confirmed) return;
+
+    selectRemoveBtn.disabled = true;
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "REMOVE_ITEMS", assetIds: ids });
+      if (response && response.error) {
+        showToast(`Remove failed: ${response.error}`, true);
+        return;
+      }
+      const idSet = new Set(ids);
+      allSellItems = allSellItems.filter((item) => !idSet.has(item.assetId));
+      selectedAssetIds.clear();
+      updateSelectBar();
+      renderSellPage();
+      showToast(`Removed ${ids.length} item${plural}`);
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`, true);
+    } finally {
+      selectRemoveBtn.disabled = false;
+    }
+  });
+
   let currentUserId = null;
 
   // --- Auto-List Panel ---
@@ -400,7 +457,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function createItemCard(item) {
     const card = document.createElement("div");
-    card.className = "item-card";
+    card.className = "item-card" + (selectedAssetIds.has(item.assetId) ? " selected" : "");
     card.dataset.assetId = item.assetId;
 
     const lowestText = item.lowestPrice
@@ -516,6 +573,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     card.innerHTML = `
+      <input type="checkbox" class="item-select-cb" title="Select for removal" ${selectedAssetIds.has(item.assetId) ? "checked" : ""}>
       <img class="item-thumbnail"
            src="${item.thumbnailUrl || ""}"
            alt="${item.name}"
@@ -537,6 +595,17 @@ document.addEventListener("DOMContentLoaded", () => {
     card.querySelector(".item-remove").addEventListener("click", async () => {
       const confirmed = await showConfirm(`Are you sure you want to remove ${item.name} from this list?`);
       if (confirmed) removeItem(item.assetId, card);
+    });
+
+    const selectCb = card.querySelector(".item-select-cb");
+    selectCb.addEventListener("change", () => {
+      if (selectCb.checked) {
+        selectedAssetIds.add(item.assetId);
+      } else {
+        selectedAssetIds.delete(item.assetId);
+      }
+      card.classList.toggle("selected", selectCb.checked);
+      updateSelectBar();
     });
 
     // Delist All button handler
@@ -1234,6 +1303,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     allSellItems = allSellItems.filter((item) => item.assetId !== assetId);
+    selectedAssetIds.delete(assetId);
+    updateSelectBar();
     renderSellPage();
   }
 
@@ -1381,6 +1452,7 @@ document.addEventListener("DOMContentLoaded", () => {
       renderLastUpdated();
 
       allSellItems = response.items;
+      pruneSelection();
       renderSellPage();
     } catch (err) {
       if (countdownTimer) clearInterval(countdownTimer);

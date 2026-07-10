@@ -356,6 +356,75 @@ body {
   border-bottom: none;
 }
 
+.item-select-cb {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: #e74c3c;
+  cursor: pointer;
+}
+
+.item-card.selected {
+  background-color: #2e2426;
+}
+
+.item-card.selected:hover {
+  background-color: #362a2c;
+}
+
+.select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #26282a;
+  border-bottom: 1px solid #393b3d;
+}
+
+.select-count {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.select-remove-btn {
+  background-color: #e74c3c;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.select-remove-btn:hover {
+  background-color: #c0392b;
+}
+
+.select-remove-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.select-clear-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #aaa;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.select-clear-btn:hover {
+  background-color: #393b3d;
+  color: #fff;
+}
+
 .item-thumbnail {
   width: 60px;
   height: 60px;
