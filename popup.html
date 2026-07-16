@@ -9,8 +9,17 @@
 <body>
   <div id="app">
     <div class="header">
-      <h1>UGC Price Changer</h1>
-      <button id="refresh-btn" class="refresh-btn" title="Refresh prices">&#x21bb;</button>
+      <div class="header-left">
+        <h1>UGC Price Changer</h1>
+        <span id="load-progress" class="load-progress hidden"></span>
+      </div>
+      <div class="header-actions">
+        <span id="last-updated" class="last-updated" title="Data age — press refresh to fetch fresh prices"></span>
+        <button id="refresh-btn" class="refresh-btn" title="Refresh prices">&#x21bb;</button>
+      </div>
+      <div id="load-progress-bar" class="load-progress-bar hidden">
+        <div id="load-progress-fill" class="load-progress-fill"></div>
+      </div>
     </div>
 
     <!-- Tab Bar -->
@@ -46,6 +55,10 @@
             <label>Undercut by R$:</label>
             <input type="number" id="autolist-undercut" min="1" max="10000" value="1" class="autolist-input">
           </div>
+          <div class="autolist-row">
+            <label title="Copies of each item to list per cycle (capped at how many you own; a card's List # overrides this)">List per item:</label>
+            <input type="number" id="autolist-listcount" min="1" max="100" value="1" class="autolist-input">
+          </div>
           <div class="autolist-protected-section">
             <div class="autolist-row">
               <label>Protected:</label>
@@ -66,6 +79,13 @@
       <!-- Search Bar -->
       <div id="sell-search" class="sell-search hidden">
         <input type="text" id="sell-search-input" placeholder="Search items..." spellcheck="false">
+      </div>
+
+      <!-- Multi-select Action Bar -->
+      <div id="select-bar" class="select-bar hidden">
+        <span id="select-count" class="select-count">0 selected</span>
+        <button id="select-remove-btn" class="select-remove-btn">Remove Selected</button>
+        <button id="select-clear-btn" class="select-clear-btn">Clear</button>
       </div>
 
       <div id="loading" class="loading hidden">

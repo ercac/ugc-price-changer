@@ -10,6 +10,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const assetInput = document.getElementById("asset-input");
   const addBtn = document.getElementById("add-btn");
   const refreshBtn = document.getElementById("refresh-btn");
+  const lastUpdatedEl = document.getElementById("last-updated");
+  const loadProgressEl = document.getElementById("load-progress");
+  const loadProgressBarEl = document.getElementById("load-progress-bar");
+  const loadProgressFillEl = document.getElementById("load-progress-fill");
 
   // --- Tab Bar ---
   const tabSellBtn = document.getElementById("tab-sell");
@@ -54,6 +58,63 @@ document.addEventListener("DOMContentLoaded", () => {
   let sellPage = 1;
   const SELL_PAGE_SIZE = 10;
 
+  // --- Multi-select removal ---
+  const selectBarEl = document.getElementById("select-bar");
+  const selectCountEl = document.getElementById("select-count");
+  const selectRemoveBtn = document.getElementById("select-remove-btn");
+  const selectClearBtn = document.getElementById("select-clear-btn");
+  const selectedAssetIds = new Set();
+
+  function updateSelectBar() {
+    const n = selectedAssetIds.size;
+    selectBarEl.classList.toggle("hidden", n === 0);
+    selectCountEl.textContent = `${n} selected`;
+  }
+
+  // Drop selections pointing at items that no longer exist (e.g. after a refresh)
+  function pruneSelection() {
+    for (const id of [...selectedAssetIds]) {
+      if (!allSellItems.some((item) => item.assetId === id)) {
+        selectedAssetIds.delete(id);
+      }
+    }
+    updateSelectBar();
+  }
+
+  selectClearBtn.addEventListener("click", () => {
+    selectedAssetIds.clear();
+    updateSelectBar();
+    renderSellPage();
+  });
+
+  selectRemoveBtn.addEventListener("click", async () => {
+    const ids = [...selectedAssetIds];
+    if (ids.length === 0) return;
+
+    const plural = ids.length !== 1 ? "s" : "";
+    const confirmed = await showConfirm(`Remove ${ids.length} item${plural} from this list?`);
+    if (!confirmed) return;
+
+    selectRemoveBtn.disabled = true;
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "REMOVE_ITEMS", assetIds: ids });
+      if (response && response.error) {
+        showToast(`Remove failed: ${response.error}`, true);
+        return;
+      }
+      const idSet = new Set(ids);
+      allSellItems = allSellItems.filter((item) => !idSet.has(item.assetId));
+      selectedAssetIds.clear();
+      updateSelectBar();
+      renderSellPage();
+      showToast(`Removed ${ids.length} item${plural}`);
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`, true);
+    } finally {
+      selectRemoveBtn.disabled = false;
+    }
+  });
+
   let currentUserId = null;
 
   // --- Auto-List Panel ---
@@ -63,6 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const autolistBadge = document.getElementById("autolist-badge");
   const autolistInterval = document.getElementById("autolist-interval");
   const autolistUndercut = document.getElementById("autolist-undercut");
+  const autolistListCount = document.getElementById("autolist-listcount");
   const autolistStartBtn = document.getElementById("autolist-start");
   const autolistStopBtn = document.getElementById("autolist-stop");
   const autolistStatus = document.getElementById("autolist-status");
@@ -287,6 +349,7 @@ document.addEventListener("DOMContentLoaded", () => {
       enabled: true,
       intervalMin: Math.max(3, Number(autolistInterval.value) || 5),
       undercutAmount: Math.max(1, Number(autolistUndercut.value) || 1),
+      defaultListCount: Math.max(1, Number(autolistListCount.value) || 1),
       priceFloors: {},
       listCounts: {},
       protectedSellers: protectedSellers,
@@ -314,6 +377,7 @@ document.addEventListener("DOMContentLoaded", () => {
     autolistBadge.classList.toggle("hidden", !running);
     autolistInterval.disabled = running;
     autolistUndercut.disabled = running;
+    autolistListCount.disabled = running;
     protectedAddInput.disabled = running;
     protectedAddBtn.disabled = running;
     renderProtectedChips(running);
@@ -338,6 +402,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.settings) {
       autolistInterval.value = state.settings.intervalMin || 5;
       autolistUndercut.value = state.settings.undercutAmount || 1;
+      autolistListCount.value = state.settings.defaultListCount || 1;
       if (state.settings.protectedSellers && state.settings.protectedSellers.length > 0) {
         protectedSellers = state.settings.protectedSellers;
         renderProtectedChips(state.running);
@@ -392,7 +457,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function createItemCard(item) {
     const card = document.createElement("div");
-    card.className = "item-card";
+    card.className = "item-card" + (selectedAssetIds.has(item.assetId) ? " selected" : "");
     card.dataset.assetId = item.assetId;
 
     const lowestText = item.lowestPrice
@@ -508,6 +573,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     card.innerHTML = `
+      <input type="checkbox" class="item-select-cb" title="Select for removal" ${selectedAssetIds.has(item.assetId) ? "checked" : ""}>
       <img class="item-thumbnail"
            src="${item.thumbnailUrl || ""}"
            alt="${item.name}"
@@ -529,6 +595,17 @@ document.addEventListener("DOMContentLoaded", () => {
     card.querySelector(".item-remove").addEventListener("click", async () => {
       const confirmed = await showConfirm(`Are you sure you want to remove ${item.name} from this list?`);
       if (confirmed) removeItem(item.assetId, card);
+    });
+
+    const selectCb = card.querySelector(".item-select-cb");
+    selectCb.addEventListener("change", () => {
+      if (selectCb.checked) {
+        selectedAssetIds.add(item.assetId);
+      } else {
+        selectedAssetIds.delete(item.assetId);
+      }
+      card.classList.toggle("selected", selectCb.checked);
+      updateSelectBar();
     });
 
     // Delist All button handler
@@ -838,10 +915,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let pendingQueue = [];
   let currentPendingIdx = 0;
 
-  function showToast(msg) {
+  function showToast(msg, isError = false) {
     toastMsg.textContent = msg;
+    toast.classList.toggle("toast-error", isError);
     toast.classList.remove("hidden");
-    setTimeout(() => toast.classList.add("hidden"), 3000);
+    setTimeout(() => toast.classList.add("hidden"), isError ? 4000 : 3000);
   }
 
   function openModal(opts) {
@@ -1225,6 +1303,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     allSellItems = allSellItems.filter((item) => item.assetId !== assetId);
+    selectedAssetIds.delete(assetId);
+    updateSelectBar();
     renderSellPage();
   }
 
@@ -1270,37 +1350,80 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSellPage();
   }
 
-  async function loadItems(forceRefresh = false) {
-    showState("loading");
-    sellSearchEl.classList.add("hidden");
-    sellPaginationEl.classList.add("hidden");
+  // --- Loading progress (streamed from the background during item fetches) ---
 
-    // Estimate load time and start countdown
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "GET_ITEMS_PROGRESS" && msg.total > 0) {
+      loadProgressEl.textContent = `${msg.loaded}/${msg.total} items loaded`;
+      loadProgressEl.classList.remove("hidden");
+      loadProgressBarEl.classList.remove("hidden");
+      loadProgressFillEl.style.width = `${Math.round((msg.loaded / msg.total) * 100)}%`;
+    }
+  });
+
+  function hideLoadProgress() {
+    loadProgressEl.classList.add("hidden");
+    loadProgressBarEl.classList.add("hidden");
+    loadProgressFillEl.style.width = "0%";
+  }
+
+  // --- Last-updated label ---
+  let lastUpdatedTs = null;
+
+  function renderLastUpdated() {
+    if (!lastUpdatedTs) {
+      lastUpdatedEl.textContent = "";
+      return;
+    }
+    const mins = Math.floor((Date.now() - lastUpdatedTs) / 60000);
+    let text;
+    if (mins < 1) text = "updated just now";
+    else if (mins < 60) text = `updated ${mins}m ago`;
+    else if (mins < 1440) text = `updated ${Math.floor(mins / 60)}h ago`;
+    else text = `updated ${Math.floor(mins / 1440)}d ago`;
+    lastUpdatedEl.textContent = text;
+  }
+
+  // Keep the label current while the popup stays open
+  setInterval(renderLastUpdated, 30000);
+
+  async function loadItems(forceRefresh = false) {
+    // If a list is already on screen when a refresh starts, keep it visible
+    // and refresh in the background instead of blanking to a spinner
+    const backgroundRefresh = forceRefresh && allSellItems.length > 0;
+
+    if (backgroundRefresh) {
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add("refreshing");
+    } else {
+      showState("loading");
+      sellSearchEl.classList.add("hidden");
+      sellPaginationEl.classList.add("hidden");
+    }
+
+    // Estimate load time and start countdown — shown in the header label
+    // during a background refresh so the list stays visible.
     // ~1.5s per item (500ms throttle × 2 API calls + 3s pause every 5 items)
     let countdownTimer = null;
-    try {
-      const storageData = await chrome.storage.local.get("watchlist");
-      const itemCount = (storageData.watchlist || []).length;
-      if (itemCount > 0 && forceRefresh) {
-        const batchPauses = Math.floor(itemCount / 5) * 3;
-        const estimatedSecs = Math.ceil(itemCount * 1.5 + batchPauses);
-        let remaining = estimatedSecs;
+    const countdownEl = backgroundRefresh ? lastUpdatedEl : loadingCountdownEl;
+    const itemCount = allSellItems.length;
+    if (forceRefresh && itemCount > 0) {
+      const batchPauses = Math.floor(itemCount / 5) * 3;
+      const estimatedSecs = Math.ceil(itemCount * 1.5 + batchPauses);
+      let remaining = estimatedSecs;
 
-        loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
-        countdownTimer = setInterval(() => {
-          remaining--;
-          if (remaining > 0) {
-            loadingCountdownEl.textContent = `est. ${remaining}s remaining`;
-          } else {
-            loadingCountdownEl.textContent = "almost done...";
-            clearInterval(countdownTimer);
-            countdownTimer = null;
-          }
-        }, 1000);
-      } else {
-        loadingCountdownEl.textContent = "";
-      }
-    } catch (_) {
+      countdownEl.textContent = `refreshing… est. ${remaining}s`;
+      countdownTimer = setInterval(() => {
+        remaining--;
+        if (remaining > 0) {
+          countdownEl.textContent = `refreshing… est. ${remaining}s`;
+        } else {
+          countdownEl.textContent = "refreshing… almost done";
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+        }
+      }, 1000);
+    } else {
       loadingCountdownEl.textContent = "";
     }
 
@@ -1310,8 +1433,14 @@ document.addEventListener("DOMContentLoaded", () => {
       loadingCountdownEl.textContent = "";
 
       if (response.error) {
-        showState("error");
-        errorMessageEl.textContent = response.error;
+        if (backgroundRefresh) {
+          // Keep the existing list on screen; just report the failure
+          renderLastUpdated();
+          showToast(`Refresh failed: ${response.error}`, true);
+        } else {
+          showState("error");
+          errorMessageEl.textContent = response.error;
+        }
         return;
       }
 
@@ -1319,13 +1448,26 @@ document.addEventListener("DOMContentLoaded", () => {
         currentUserId = response.userId;
       }
 
+      lastUpdatedTs = response.lastUpdated || null;
+      renderLastUpdated();
+
       allSellItems = response.items;
+      pruneSelection();
       renderSellPage();
     } catch (err) {
       if (countdownTimer) clearInterval(countdownTimer);
       loadingCountdownEl.textContent = "";
-      showState("error");
-      errorMessageEl.textContent = `Error: ${err.message}`;
+      if (backgroundRefresh) {
+        renderLastUpdated();
+        showToast(`Refresh failed: ${err.message}`, true);
+      } else {
+        showState("error");
+        errorMessageEl.textContent = `Error: ${err.message}`;
+      }
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove("refreshing");
+      hideLoadProgress();
     }
   }
 

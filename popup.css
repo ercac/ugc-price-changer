@@ -37,6 +37,49 @@ body {
   color: #ffffff;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.load-progress {
+  font-size: 11px;
+  font-weight: 600;
+  color: #00b06f;
+  white-space: nowrap;
+}
+
+.load-progress-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background-color: #393b3d;
+  overflow: hidden;
+}
+
+.load-progress-fill {
+  height: 100%;
+  width: 0%;
+  background-color: #00b06f;
+  transition: width 0.3s ease;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.last-updated {
+  font-size: 11px;
+  color: #777;
+  white-space: nowrap;
+}
+
 .refresh-btn {
   background: none;
   border: 1px solid #393b3d;
@@ -55,6 +98,17 @@ body {
 .refresh-btn:hover {
   background-color: #393b3d;
   color: #fff;
+}
+
+.refresh-btn.refreshing {
+  animation: refreshSpin 1s linear infinite;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+@keyframes refreshSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Add item bar */
@@ -300,6 +354,75 @@ body {
 
 .item-card:last-child {
   border-bottom: none;
+}
+
+.item-select-cb {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: #e74c3c;
+  cursor: pointer;
+}
+
+.item-card.selected {
+  background-color: #2e2426;
+}
+
+.item-card.selected:hover {
+  background-color: #362a2c;
+}
+
+.select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #26282a;
+  border-bottom: 1px solid #393b3d;
+}
+
+.select-count {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.select-remove-btn {
+  background-color: #e74c3c;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.select-remove-btn:hover {
+  background-color: #c0392b;
+}
+
+.select-remove-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.select-clear-btn {
+  background: none;
+  border: 1px solid #393b3d;
+  color: #aaa;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.select-clear-btn:hover {
+  background-color: #393b3d;
+  color: #fff;
 }
 
 .item-thumbnail {
@@ -1447,6 +1570,14 @@ body {
 
 .toast-icon {
   font-size: 14px;
+}
+
+.success-toast.toast-error {
+  background-color: #e74c3c;
+}
+
+.success-toast.toast-error .toast-icon {
+  display: none;
 }
 
 @keyframes toastIn {
