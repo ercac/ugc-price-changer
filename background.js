@@ -752,6 +752,18 @@ async function runAutoListCycle() {
     });
   }
 
+  // Full item refresh after the cycle: picks up what the patches can't know
+  // (sold copies, market moves on untouched items). Runs inside the cycle so
+  // the overlap guard covers it; the patches above remain as fallback data if
+  // this fetch fails. Tells an open popup to re-render from the fresh cache.
+  try {
+    console.log("[AutoList] Post-cycle item refresh...");
+    await handleGetItems(true);
+    chrome.runtime.sendMessage({ type: "ITEMS_REFRESHED" }).catch(() => {});
+  } catch (e) {
+    console.warn("[AutoList] Post-cycle refresh failed:", e.message);
+  }
+
   autoListCycleInProgress = false;
   return { log };
 }

@@ -1359,7 +1359,30 @@ document.addEventListener("DOMContentLoaded", () => {
       loadProgressBarEl.classList.remove("hidden");
       loadProgressFillEl.style.width = `${Math.round((msg.loaded / msg.total) * 100)}%`;
     }
+    if (msg.type === "ITEMS_REFRESHED") {
+      // Auto-list finished a cycle and refreshed the cache — re-render from it
+      refreshFromCache();
+    }
   });
+
+  // Silently re-render the sell list from the persisted cache (no spinner,
+  // no network fetch) — used when auto-list refreshes data behind the popup
+  async function refreshFromCache() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "GET_ITEMS", forceRefresh: false });
+      if (!response || response.error) return;
+      if (response.userId) currentUserId = response.userId;
+      lastUpdatedTs = response.lastUpdated || null;
+      renderLastUpdated();
+      allSellItems = response.items;
+      pruneSelection();
+      renderSellPage();
+    } catch (_) {
+      // Popup will catch up on next open
+    } finally {
+      hideLoadProgress();
+    }
+  }
 
   function hideLoadProgress() {
     loadProgressEl.classList.add("hidden");
