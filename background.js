@@ -491,9 +491,13 @@ async function clearAllPending2FA() {
 }
 
 // --- Auto-List Engine ---
+// Cycles are driven by chrome.alarms, not setTimeout: MV3 kills the service
+// worker ~30s after it goes idle, which silently destroys timers. Alarms
+// survive worker death and wake it back up. The persisted settings.enabled
+// flag is the source of truth for whether auto-list is on.
 
-let autoListRunning = false;
-let autoListTimerId = null;
+const AUTOLIST_ALARM = "autoListCycle";
+let autoListCycleInProgress = false; // in-memory overlap guard (worker-lifetime only)
 let autoList2FAResolver = null; // resolves when pending 2FA is completed/skipped during a cycle
 
 async function getAutoListSettings() {
@@ -526,10 +530,12 @@ function randomJitter(baseMs) {
 
 async function runAutoListCycle() {
   const settings = await getAutoListSettings();
-  if (!settings.enabled) {
-    autoListRunning = false;
+  if (!settings.enabled) return;
+  if (autoListCycleInProgress) {
+    console.log("[AutoList] Cycle already in progress, skipping this alarm");
     return;
   }
+  autoListCycleInProgress = true;
 
   console.log("[AutoList] Starting cycle...");
   const log = [];
@@ -544,7 +550,7 @@ async function runAutoListCycle() {
 
     if (watchlist.length === 0) {
       log.push({ msg: "No items in watchlist", time: Date.now() });
-      scheduleNextCycle(settings);
+      autoListCycleInProgress = false;
       return { log };
     }
 
@@ -746,45 +752,61 @@ async function runAutoListCycle() {
     });
   }
 
-  scheduleNextCycle(settings);
+  autoListCycleInProgress = false;
   return { log };
 }
 
 function scheduleNextCycle(settings) {
-  if (autoListTimerId) clearTimeout(autoListTimerId);
-
-  if (!settings.enabled) {
-    autoListRunning = false;
-    return;
-  }
-
+  if (!settings.enabled) return;
   const intervalMs = settings.intervalMin * 60 * 1000;
   const nextMs = randomJitter(intervalMs);
   console.log(`[AutoList] Next cycle in ${Math.round(nextMs / 1000)}s`);
-
-  autoListTimerId = setTimeout(() => {
-    runAutoListCycle();
-  }, nextMs);
-
-  autoListRunning = true;
+  chrome.alarms.create(AUTOLIST_ALARM, { when: Date.now() + nextMs });
 }
 
 function startAutoList(settings) {
   settings.enabled = true;
   saveAutoListSettings(settings);
+  scheduleNextCycle(settings);
   // Run first cycle immediately
   runAutoListCycle();
 }
 
 function stopAutoList() {
-  if (autoListTimerId) clearTimeout(autoListTimerId);
-  autoListTimerId = null;
-  autoListRunning = false;
+  chrome.alarms.clear(AUTOLIST_ALARM);
   getAutoListSettings().then((s) => {
     s.enabled = false;
     saveAutoListSettings(s);
   });
 }
+
+// Alarm-driven cycle repetition. The next alarm is scheduled BEFORE the cycle
+// runs so the chain survives a cycle that stalls (e.g. waiting on manual 2FA)
+// or a worker death mid-cycle.
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== AUTOLIST_ALARM) return;
+  const settings = await getAutoListSettings();
+  if (!settings.enabled) return;
+  scheduleNextCycle(settings);
+  runAutoListCycle();
+});
+
+// Re-arm on service worker startup: alarms survive worker death, but they are
+// cleared when the extension itself is reloaded or updated.
+(async () => {
+  try {
+    const settings = await getAutoListSettings();
+    if (settings.enabled) {
+      const existing = await chrome.alarms.get(AUTOLIST_ALARM);
+      if (!existing) {
+        console.log("[AutoList] Re-arming alarm after extension reload");
+        scheduleNextCycle(settings);
+      }
+    }
+  } catch (e) {
+    // Not authenticated yet — auto-list will be restarted from the popup
+  }
+})();
 
 // --- Reseller Lookup ---
 
@@ -1187,7 +1209,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const data = await chrome.storage.local.get([logKey, lastRunKey]);
       sendResponse({
         settings,
-        running: autoListRunning,
+        // settings.enabled is the persisted source of truth — an in-memory
+        // flag would read false whenever a fresh worker answers this message
+        running: settings.enabled,
         log: data[logKey] || [],
         lastRun: data[lastRunKey] || null,
       });
