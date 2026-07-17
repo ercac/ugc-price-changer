@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "View and manage your Roblox UGC limited items and resale prices",
   "permissions": [
+    "alarms",
     "cookies",
     "storage"
   ],
